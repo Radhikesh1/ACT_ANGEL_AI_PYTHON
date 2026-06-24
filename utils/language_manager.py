@@ -11,6 +11,18 @@ from utils.session_state import (
 
 
 # ---------------------------------------------------
+# INITIALIZE SESSION (called once per call)
+# ---------------------------------------------------
+
+def initialize_language_session(call_id, default_language: str = "english"):
+    if call_id not in language_sessions:
+        language_sessions[call_id] = {
+            "language": default_language,
+            "locked": False,
+            "pending": None,
+        }
+
+# ---------------------------------------------------
 # GET LANGUAGE
 # ---------------------------------------------------
 

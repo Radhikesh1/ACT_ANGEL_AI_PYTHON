@@ -3,3 +3,8 @@ python-dotenv
 fastapi
 uvicorn[standard]
 dateparser
+sqlalchemy[asyncio]>=2.0
+asyncpg
+passlib[bcrypt]
+python-jose[cryptography]
+httpx

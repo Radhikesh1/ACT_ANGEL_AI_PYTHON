@@ -1,18 +1,25 @@
-# ACT Angel AI — Ciya Voice Assistant
+# ACT Angel AI — Voice Assistant Platform
 
-**Ciya** is a multilingual inbound voice AI assistant built for Cloudsteer's luxury real estate project **Citadel** (Hiranandani Fortune City, Panvel, Navi Mumbai). It handles incoming customer calls, answers FAQs, detects language preferences, and books appointments — all in real time over phone.
+A multi-assistant voice AI platform for managing inbound customer calls. Create multiple AI assistants, assign Plivo phone numbers to them, and configure every aspect of each assistant's behaviour — all through a web dashboard.
+
+The default assistant persona is **Ciya**, built for Cloudsteer's luxury real estate project **Citadel** (Hiranandani Fortune City, Panvel, Navi Mumbai).
 
 ---
 
-## Architecture
-
-Calls arrive via **Plivo** telephony. Audio is streamed over WebSocket into a **Pipecat** voice pipeline that processes frames sequentially:
+## System Overview
 
 ```
-Plivo (WebSocket) → STT → Noise Filter → Intent Router → LLM → Filler → TTS → Plivo (WebSocket)
+Frontend (React)  ──►  FastAPI backend  ──►  PostgreSQL
+                            │
+                    Plivo (inbound call)
+                            │
+                    WebSocket audio stream
+                            │
+                    Pipecat voice pipeline
+                    STT → Noise → Intent → LLM → Filler → TTS
 ```
 
-State is managed in-memory per `CallUUID` for the lifetime of each call.
+Each inbound call is routed to the assistant assigned to that Plivo number. The assistant's system prompt, voice, language, LLM model and temperature are loaded from the database at call time.
 
 ---
 
@@ -20,15 +27,16 @@ State is managed in-memory per `CallUUID` for the lifetime of each call.
 
 | Layer | Technology |
 |---|---|
-| Voice pipeline | [Pipecat-AI](https://github.com/pipecat-ai/pipecat) |
+| Voice pipeline | Pipecat-AI |
 | Web server | FastAPI + Uvicorn |
-| LLM | OpenAI GPT-4o-mini |
+| Database | PostgreSQL (via SQLAlchemy async + asyncpg) |
+| LLM | OpenAI (GPT-4o-mini / GPT-4o, configurable per assistant) |
 | STT | Sarvam AI (`saaras:v3`) |
 | TTS | Sarvam AI (`bulbul:v3`) |
 | Telephony | Plivo (µ-law, 8 kHz audio) |
 | Appointment API | Make.com Webhook |
-| Date parsing | `dateparser` |
-| HTTP client | `httpx` (async) |
+| Auth | JWT in httpOnly cookie |
+| Frontend | React 19 + Vite + Tailwind + shadcn/ui (separate repo) |
 
 ---
 
@@ -36,43 +44,134 @@ State is managed in-memory per `CallUUID` for the lifetime of each call.
 
 ```
 ACT_ANGEL_AI_PYTHON/
-├── server.py                    # FastAPI server — HTTP & WebSocket endpoints
-├── agent_bengali.py             # Main bot orchestrator — builds & runs pipeline
-├── system_prompt.py             # AI persona (Ciya) rules & knowledge
+├── server.py                    # FastAPI app — all routes, CORS, startup
+├── voice_agent.py               # Voice pipeline orchestrator (builds & runs Pipecat pipeline per call)
+├── system_prompt.py             # Default fallback system prompt
 ├── requirements.txt
-├── .env                         # API keys & configuration (see below)
+├── .env                         # API keys & config (see below)
+│
+├── migrations/                  # Database migration runner
+│   └── runner.py                # Checks & applies schema changes on startup
+│
+├── database/                    # PostgreSQL layer
+│   ├── connection.py            # Async engine, session factory, Base
+│   └── models.py                # Assistant + PlivoNumber ORM models
+│
+├── api/                         # REST API routers
+│   ├── auth.py                  # POST /api/auth/login, GET /api/auth/me, POST /api/auth/logout
+│   ├── assistants.py            # CRUD /api/assistants
+│   ├── numbers.py               # Plivo number management /api/numbers
+│   └── dependencies.py          # JWT cookie guard (get_current_user)
 │
 ├── processors/                  # Pipecat frame processors
-│   ├── noise_gate_processor.py  # Filters short/junk transcriptions
-│   ├── language_processor.py    # Detects & switches language per caller
-│   ├── intent_router.py         # Detects appointment intent, queues fillers
+│   ├── noise_gate_processor.py  # Filters junk transcriptions
+│   ├── language_processor.py    # Detects & confirms language switching
+│   ├── intent_router.py         # Routes appointment intent, queues fillers
 │   ├── appointment_processor.py # Extracts date/time, calls booking API
-│   └── filler_processor.py      # Plays "thinking" fillers during API calls
+│   └── filler_processor.py      # Plays "thinking" fillers during API latency
 │
 ├── services/
 │   ├── appointment_api.py       # POST to Make.com webhook
-│   └── filler_manager.py        # Returns random filler strings
+│   └── filler_manager.py        # Random filler string selection
 │
 ├── utils/
-│   ├── session_state.py         # In-memory session dicts (call_sessions, language_sessions, etc.)
-│   ├── language_manager.py      # Language/voice lookup, confirmation detection
+│   ├── session_state.py         # In-memory call state dicts
+│   ├── language_manager.py      # Language/voice lookup, session init, confirmations
 │   ├── tts_factory.py           # Creates Sarvam TTS with correct voice per language
-│   ├── datetime_parser.py       # Parses natural language date/time → ISO string
-│   ├── context_manager.py       # Keeps LLM context to last 8 messages
-│   ├── audio_utils.py           # Silence detection via RMS energy
-│   └── filler_text.py           # Filler strings (multilingual)
+│   ├── datetime_parser.py       # Natural language date/time → ISO string (IST)
+│   ├── context_manager.py       # LLM context trimming (last 8 messages)
+│   ├── audio_utils.py           # Silence detection via RMS
+│   └── filler_text.py           # Multilingual filler strings
 │
 ├── frames/
 │   └── custom_frames.py         # FillerRequestFrame (custom Pipecat frame)
 │
 └── data/
-    ├── faq_data.py              # Hardcoded FAQ answers about Citadel
-    └── multilingual_keywords.py # Language keywords, voice mappings, confirmation words
+    ├── faq_data.py              # FAQ answers about Citadel project
+    └── multilingual_keywords.py # Language keywords, voice map, confirmation words
 ```
 
 ---
 
-## Supported Languages
+## Database Models
+
+### `assistants`
+
+| Column | Type | Description |
+|---|---|---|
+| `id` | UUID | Primary key |
+| `name` | String | Display name |
+| `system_prompt` | Text | Full LLM system prompt |
+| `welcome_message` | String | First thing Ciya says when call connects |
+| `default_language` | String | `english` / `hindi` / `bengali` / `telugu` / `gujarati` |
+| `voice` | String | Sarvam TTS voice name |
+| `llm_model` | String | `gpt-4o-mini` or `gpt-4o` |
+| `temperature` | Float | 0.0 – 1.0 |
+| `business_hours_start` | String | `HH:MM` (IST) |
+| `business_hours_end` | String | `HH:MM` (IST) |
+| `status` | String | `development` (default) or `production` |
+| `created_at` | DateTime | |
+| `updated_at` | DateTime | |
+
+### `plivo_numbers`
+
+| Column | Type | Description |
+|---|---|---|
+| `id` | UUID | Primary key |
+| `number` | String | Plivo phone number |
+| `friendly_name` | String | Alias from Plivo |
+| `assistant_id` | UUID FK | Linked assistant (nullable) |
+| `webhook_configured` | Boolean | Whether Plivo webhook was set |
+
+---
+
+## API Endpoints
+
+### Auth
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/auth/login` | Login with `{ username, password }` → sets `access_token` cookie |
+| `GET` | `/api/auth/me` | Returns current user info |
+| `POST` | `/api/auth/logout` | Clears cookie |
+
+### Assistants
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/assistants` | List all assistants |
+| `POST` | `/api/assistants` | Create assistant |
+| `GET` | `/api/assistants/{id}` | Get one assistant |
+| `PUT` | `/api/assistants/{id}` | Update assistant |
+| `DELETE` | `/api/assistants/{id}` | Delete assistant |
+
+### Phone Numbers
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/numbers` | List Plivo numbers + assignment state |
+| `POST` | `/api/numbers/{number}/assign/{assistant_id}` | Assign number → assistant, auto-sets Plivo webhook |
+| `POST` | `/api/numbers/{number}/unassign` | Remove assignment |
+
+### Voice (Plivo)
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/answerCall` | Receives Plivo inbound call, looks up assistant by dialed number, returns XML |
+| `WebSocket` | `/ws` | Real-time µ-law audio stream for active calls |
+
+---
+
+## Call Flow
+
+1. Caller dials a Plivo number
+2. Plivo `GET /answerCall?CallUUID=…&From=…&To=…`
+3. Server looks up `To` number → finds assigned assistant → loads config from DB
+4. Config is stored in `call_sessions[call_uuid]`
+5. Server returns XML → Plivo opens WebSocket to `/ws`
+6. `run_bot()` reads assistant config (prompt, model, voice, language) and builds the pipeline
+7. Pipeline runs: STT → noise filter → language detection → intent router → LLM → TTS → back to caller
+8. If no assistant is assigned to the number, the default fallback prompt is used
+
+---
+
+## Supported Languages & Voices
 
 | Language | TTS Voice |
 |---|---|
@@ -80,49 +179,40 @@ ACT_ANGEL_AI_PYTHON/
 | Hindi | `priya` |
 | Bengali | `simran` |
 | Telugu | `kavitha` |
-| Gujarati | *(configured)* |
+| Gujarati | `priya` |
 
-Language is auto-detected from caller speech. A confirmation step prevents accidental switching.
-
----
-
-## Key Features
-
-- **Inbound call handling** via Plivo WebSocket streaming
-- **Multilingual STT/TTS** (5 Indian languages via Sarvam AI)
-- **Intent detection** — appointment booking, site visit, callback requests
-- **Appointment scheduling** — natural language date/time parsing → Make.com API
-- **Noise filtering** — ignores filler sounds ("hmm", "uh", "umm")
-- **Filler sounds** — plays thinking phrases during API latency to keep calls natural
-- **FAQ integration** — answers questions about Citadel pricing, location, amenities
-- **Session state** — per-call language lock and conversation state tracking
-
-### Property Knowledge (Citadel)
-- Location: Hiranandani Fortune City, Panvel, Navi Mumbai
-- Configuration: 4 BHK luxury villas
-- Price range: ₹3.8 – ₹5.5 Crore
-- Possession: September 2027
-- Business hours: Mon–Fri, 10:30 AM – 6:30 PM
+Language is auto-detected from caller speech. A confirmation step prevents accidental switching. The default language per assistant is configurable in the dashboard.
 
 ---
 
 ## Environment Variables
 
-Create a `.env` file in the project root:
-
 ```env
+# AI Services
 OPENAI_API_KEY=sk-proj-...
 SARVAM_API_KEY=sk_...
+
+# Plivo Telephony
 PLIVO_AUTH_ID=...
 PLIVO_AUTH_TOKEN=...
 PLIVO_PHONE_NUMBER=+91...
+DOMAIN=your-tunnel.trycloudflare.com
+
+# Appointment Booking
 APPOINTMENT_API_URL=https://hook.eu2.make.com/...
 ASSISTANT_ID=...
 FROM_NUMBER=+91...
-DOMAIN=your-tunnel.trycloudflare.com
+
+# Database
+DATABASE_URL=postgresql+asyncpg://user:password@host:5432/dbname
+
+# Auth
+SECRET_KEY=a-long-random-secret-string
+ADMIN_USERID=your-username
+ADMIN_PASSWORD=your-secure-password
 ```
 
-`DOMAIN` must be the public hostname of your Cloudflare tunnel — Plivo uses it to connect to the WebSocket.
+`DOMAIN` is the public hostname used in the Plivo XML response WebSocket URL. In production this is your server domain; in development use a Cloudflare tunnel.
 
 ---
 
@@ -144,7 +234,7 @@ pip install -r requirements.txt
 
 ### 3. Configure environment
 
-Copy `.env.example` (if present) or create `.env` and fill in all values listed above.
+Create `.env` in the project root and fill in all values from the section above.
 
 ### 4. Start the server
 
@@ -152,61 +242,72 @@ Copy `.env.example` (if present) or create `.env` and fill in all values listed 
 python server.py
 ```
 
-Server runs on `http://0.0.0.0:8000`.
+Server starts on `http://0.0.0.0:8000`. On startup, the migration runner checks which migrations have been applied and runs any new ones automatically — safe to run on both a fresh database and an existing one.
 
-### 5. Expose via Cloudflare Tunnel
+### 5. Expose with Cloudflare Tunnel (development)
 
 ```bash
 cloudflared tunnel --url http://localhost:8000
 ```
 
-Copy the generated `*.trycloudflare.com` URL and set it as `DOMAIN` in `.env`.
+Copy the generated URL (e.g. `something.trycloudflare.com`) and set it as `DOMAIN` in `.env`.
 
-### 6. Configure Plivo webhook
+### 6. Use the dashboard
 
-In your Plivo console, set the answer URL for the inbound number to:
+Open the frontend at `http://localhost:3000` (see the frontend repo). Log in with `ADMIN_EMAIL` / `ADMIN_PASSWORD`, then:
 
+1. Go to **Assistants** → create an assistant with your system prompt and settings
+2. Go to **Phone Numbers** → assign a Plivo number to the assistant (webhook is set automatically)
+3. Call the number — the configured assistant handles the call
+
+---
+
+## Adding a Database Migration
+
+To add a new schema change:
+
+1. Open `migrations/runner.py`
+2. Write a new async function — always check first, act second:
+```python
+async def migration_004_add_my_column(conn):
+    if await _column_exists(conn, "assistants", "my_column"):
+        logger.info("[Migration 004] already exists — skipped")
+        return
+    await conn.execute(text("ALTER TABLE assistants ADD COLUMN my_column TEXT"))
+    logger.info("[Migration 004] Added my_column")
 ```
-https://{DOMAIN}/answerCall
+3. Register it in the `MIGRATIONS` list at the bottom of the file:
+```python
+("004_add_my_column", migration_004_add_my_column),
 ```
 
----
-
-## Endpoints
-
-| Method | Path | Description |
-|---|---|---|
-| `GET` / `POST` | `/answerCall` | Receives Plivo call, returns XML with WebSocket URL |
-| `WebSocket` | `/ws` | Streams µ-law audio for active calls |
+The runner tracks applied migrations in a `schema_migrations` table and will only run each one once.
 
 ---
 
-## Call Flow
+## In-Memory Session State
 
-1. Caller dials the Plivo number
-2. Plivo `GET /answerCall` → server returns XML with WebSocket URL
-3. Plivo streams audio to `/ws`
-4. Pipeline: audio → STT → noise filter → intent router → LLM → TTS → back to caller
-5. Ciya greets the caller and handles the conversation
-6. If appointment intent is detected, date/time is parsed and sent to Make.com
+All per-call state is in-memory and scoped to `CallUUID`. It is lost on server restart (mid-call state only — assistant configuration is always re-read from the DB).
 
----
-
-## Session State
-
-All state is **in-memory** and scoped to `CallUUID`. It is lost on server restart.
-
-| Dict | Keys | Purpose |
-|---|---|---|
-| `call_sessions` | `call_id → phone` | Maps call UUID to caller phone number |
-| `language_sessions` | `call_id → {language, locked, pending}` | Tracks detected/confirmed language |
-| `conversation_states` | `call_id → {state, type}` | Appointment form state machine |
-| `call_states` | `call_id → {}` | Reserved for additional state |
+| Dict | Purpose |
+|---|---|
+| `call_sessions` | `call_id → { from_number, assistant_config }` |
+| `language_sessions` | `call_id → { language, locked, pending }` |
+| `conversation_states` | `call_id → { awaiting_datetime, appointment_type }` |
 
 ---
 
-## Notes
+## Frontend (separate repo)
 
-- The `LanguageProcessor` and `AppointmentProcessor` are present in the codebase but currently **commented out** of the main pipeline in `agent_bengali.py`. Enable them by uncommenting the relevant lines.
-- Context is compressed to the **last 8 messages** per call to limit token usage.
-- Silence is detected via **RMS energy threshold** (default: 500) on raw audio bytes.
+The management dashboard lives in `CHAT_WEB/`. It is a React 19 + Vite app using Wouter routing, TanStack Query, and shadcn/ui components.
+
+Pages added for this platform:
+
+| Route | Page |
+|---|---|
+| `/assistants` | List all assistants — create, edit, delete |
+| `/assistants/new` | Create assistant form |
+| `/assistants/:id` | Edit assistant form |
+| `/numbers` | Plivo number table — assign/unassign assistants |
+
+The frontend proxies `/api/*` to the backend via Vite dev proxy (`PUBLIC_API_URL` in `.env`).

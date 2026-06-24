@@ -21,6 +21,7 @@ from utils.language_manager import (
     set_language,
     set_pending_language,
     clear_pending_language,
+    initialize_language_session,
 
     is_positive_confirmation,
     is_negative_confirmation,
@@ -29,28 +30,13 @@ from utils.language_manager import (
 
 class LanguageProcessor(FrameProcessor):
 
-    def __init__(self, call_id):
+    def __init__(self, call_id, default_language: str = "english"):
 
         super().__init__()
 
         self.call_id = call_id
 
-        # ----------------------------------------
-        # Initialize Session
-        # ----------------------------------------
-
-        if self.call_id not in language_sessions:
-
-            language_sessions[self.call_id] = {
-
-                "language": "english",
-
-                # Prevent random switching
-                "locked": False,
-
-                # Pending confirmation language
-                "pending": None,
-            }
+        initialize_language_session(call_id, default_language)
 
     async def process_frame(
         self,

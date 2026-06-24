@@ -1,43 +1,109 @@
 import os
 
 from dotenv import load_dotenv
-
-from fastapi import (
-    FastAPI,
-    WebSocket,
-    WebSocketDisconnect,
-    Request,
-)
-
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
+from loguru import logger
+from sqlalchemy import select
+
+from database.connection import get_db
+from database.models import PlivoNumber, Assistant
+from migrations.runner import run_migrations
 from utils.session_state import call_sessions
-from agent_bengali import run_bot
+from voice_agent import run_bot
+
+from api.auth import router as auth_router
+from api.assistants import router as assistants_router
+from api.numbers import router as numbers_router
 
 load_dotenv()
 
-app = FastAPI()
+app = FastAPI(title="ACT Angel AI API")
 
 # --------------------------------------------------
-# XML Endpoint
+# CORS  (allow the frontend origin in dev + prod)
+# --------------------------------------------------
+
+ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "https://actangels.com",
+    "https://www.actangels.com",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# --------------------------------------------------
+# Startup
+# --------------------------------------------------
+
+@app.on_event("startup")
+async def startup():
+    await run_migrations()
+    logger.info("Migrations complete — server ready")
+
+# --------------------------------------------------
+# API Routers
+# --------------------------------------------------
+
+app.include_router(auth_router, prefix="/api")
+app.include_router(assistants_router, prefix="/api")
+app.include_router(numbers_router, prefix="/api")
+
+# --------------------------------------------------
+# Plivo Inbound Call — returns XML + stores config
 # --------------------------------------------------
 
 @app.get("/answerCall")
 async def get_answer_xml(request: Request):
     params = dict(request.query_params)
 
-    call_uuid = params.get("CallUUID")
+    call_uuid = params.get("CallUUID", "")
+    from_number = params.get("From", "")
+    to_number = params.get("To", "")      # the Plivo number that was called
 
-    from_number = params.get("From")
+    # Look up which assistant owns this number
+    assistant_config: dict | None = None
 
-    # SAVE CALL DATA
+    async for db in get_db():
+        result = await db.execute(
+            select(PlivoNumber).where(PlivoNumber.number == to_number)
+        )
+        plivo_rec = result.scalar_one_or_none()
+
+        if plivo_rec and plivo_rec.assistant_id:
+            asst = await db.get(Assistant, plivo_rec.assistant_id)
+            if asst:
+                assistant_config = {
+                    "id": str(asst.id),
+                    "name": asst.name,
+                    "system_prompt": asst.system_prompt,
+                    "welcome_message": asst.welcome_message,
+                    "default_language": asst.default_language,
+                    "voice": asst.voice,
+                    "llm_model": asst.llm_model,
+                    "temperature": asst.temperature,
+                    "business_hours_start": asst.business_hours_start,
+                    "business_hours_end": asst.business_hours_end,
+                }
+
     call_sessions[call_uuid] = {
         "from_number": from_number,
+        "assistant_config": assistant_config,
     }
 
-    domain = os.getenv(
-        "DOMAIN",
-        "site-strain-journey-college.trycloudflare.com"
+    logger.info(
+        f"Inbound call {call_uuid} from {from_number} → "
+        f"assistant: {assistant_config['name'] if assistant_config else 'default'}"
     )
+
+    domain = os.getenv("DOMAIN", "localhost:8000")
 
     xml_content = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
@@ -49,41 +115,30 @@ async def get_answer_xml(request: Request):
     </Stream>
 </Response>"""
 
-    return Response(
-        content=xml_content,
-        media_type="application/xml"
-    )
+    return Response(content=xml_content, media_type="application/xml")
 
 # --------------------------------------------------
-# Websocket
+# WebSocket — real-time audio pipeline
 # --------------------------------------------------
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-
     await websocket.accept()
-
-    print("✅ WebSocket connected")
+    logger.info("WebSocket connected")
 
     try:
         await run_bot(websocket)
 
     except WebSocketDisconnect:
-        print("❌ WebSocket disconnected")
+        logger.info("WebSocket disconnected")
 
     except Exception as e:
-        print(f"❌ Error: {e}")
+        logger.error(f"WebSocket error: {e}")
 
 # --------------------------------------------------
-# Main
+# Entry point
 # --------------------------------------------------
 
 if __name__ == "__main__":
-
     import uvicorn
-
-    uvicorn.run(
-        app,
-        host="0.0.0.0",
-        port=8000,
-    )
+    uvicorn.run(app, host="0.0.0.0", port=8000)
