@@ -1,0 +1,52 @@
+# Default: normalize line endings to LF on commit
+* text=auto eol=lf
+
+# Python source files
+*.py text eol=lf
+*.pyw text eol=lf
+*.pyi text eol=lf
+
+# Config / data formats
+*.json text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.toml text eol=lf
+*.ini text eol=lf
+*.cfg text eol=lf
+*.txt text eol=lf
+*.md text eol=lf
+*.env text eol=lf
+*.sh text eol=lf
+
+# Windows scripts — keep CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary files — do not diff or convert
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.svg binary
+*.pdf binary
+*.zip binary
+*.tar binary
+*.gz binary
+*.wav binary
+*.mp3 binary
+*.ogg binary
+*.flac binary
+*.pcm binary
+*.raw binary
+*.pkl binary
+*.pyc binary
+*.pyd binary
+*.so binary
+*.exe binary
+*.dll binary
+
+# GitHub Linguist overrides
+*.py linguist-language=Python
+requirements.txt linguist-documentation=false

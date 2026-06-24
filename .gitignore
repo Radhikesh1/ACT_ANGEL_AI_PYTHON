@@ -1,0 +1,124 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+var/
+sdist/
+develop-eggs/
+.installed.cfg
+lib/
+lib64/
+MANIFEST
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env/
+ENV/
+env.bak/
+venv.bak/
+
+# Environment files
+.env
+.env.local
+.env.production
+.env.development
+.env.*
+!.env.example
+
+# Distribution / packaging
+pip-log.txt
+pip-delete-this-directory.txt
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+pytestdebug.log
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# pyenv
+.python-version
+
+# mypy / type checkers
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+
+# Logs
+logs/
+*.log
+*.log.*
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ejectthumb.db
+Thumbs.db
+desktop.ini
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak
+
+# Audio / media artifacts
+frames/
+*.wav
+*.mp3
+*.ogg
+*.flac
+*.pcm
+*.raw
+
+# AWS / deployment
+*.pem
+*.pub
+deploy.tar.gz
+*.tar.gz
+
+# PM2
+pm2.log
+.pm2/
+
+# Data / documents
+data/
+docs/
+attached_assets/
+
+# Claude Code
+.claude

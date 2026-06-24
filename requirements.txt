@@ -1,0 +1,5 @@
+pipecat-ai[sarvam,openai]
+python-dotenv
+fastapi
+uvicorn[standard]
+dateparser
