@@ -224,9 +224,6 @@ async def run_bot(websocket_client):
         call_id
     )
 
-    filler_processor = FillerProcessor()
-
-
     filler_processor = FillerProcessor(
         call_id=call_id
     )
@@ -254,11 +251,11 @@ async def run_bot(websocket_client):
 
         noise_filter,
 
-        # language_processor,
+        language_processor,
 
         intent_router,
 
-        # appointment_processor,
+        appointment_processor,
 
         context_aggregator.user(),
 

@@ -13,9 +13,6 @@ class IntentRouterProcessor(FrameProcessor):
 
     async def process_frame(self, frame, direction):
 
-        await super().process_frame(frame, direction)
-
-        # Detect user transcription
         if isinstance(frame, TranscriptionFrame):
 
             text = frame.text.lower()

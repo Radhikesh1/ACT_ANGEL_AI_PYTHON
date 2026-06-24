@@ -1,5 +1,7 @@
 import asyncio
 
+from loguru import logger
+
 from pipecat.processors.frame_processor import (
     FrameProcessor,
 )
@@ -155,13 +157,19 @@ class AppointmentProcessor(FrameProcessor):
             # API CALL IN BACKGROUND
             # ----------------------------------------
 
-            asyncio.create_task(
+            task = asyncio.create_task(
 
                 self.handle_appointment(
                     parsed,
                     state,
                     direction,
                 )
+            )
+
+            task.add_done_callback(
+                lambda t: logger.error(
+                    f"Appointment task failed: {t.exception()}"
+                ) if not t.cancelled() and t.exception() else None
             )
 
             return
@@ -209,7 +217,11 @@ class AppointmentProcessor(FrameProcessor):
                 direction,
             )
 
-        except Exception:
+        except Exception as e:
+
+            logger.error(
+                f"Appointment creation failed for call_id={self.call_id}: {e}"
+            )
 
             await self.push_frame(
                 TTSSpeakFrame(

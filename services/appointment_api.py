@@ -2,6 +2,7 @@ import os
 
 from dotenv import load_dotenv
 import httpx
+from loguru import logger
 
 
 # --------------------------------------------------
@@ -9,15 +10,18 @@ import httpx
 # --------------------------------------------------
 load_dotenv()
 
-API_URL: str = os.getenv(
-    "APPOINTMENT_API_URL"
-) or ""
-
+API_URL: str = os.getenv("APPOINTMENT_API_URL") or ""
+ASSISTANT_ID: str = os.getenv("ASSISTANT_ID") or ""
+FROM_NUMBER: str = os.getenv("FROM_NUMBER") or ""
 
 if not API_URL:
     raise ValueError("APPOINTMENT_API_URL missing")
 
-# API_URL = "YOUR_API_ENDPOINT"
+if not ASSISTANT_ID:
+    raise ValueError("ASSISTANT_ID missing")
+
+if not FROM_NUMBER:
+    raise ValueError("FROM_NUMBER missing")
 
 
 async def create_appointment_api(
@@ -39,9 +43,9 @@ async def create_appointment_api(
 
         "to_number": from_number,
 
-        "assistantId": "-Oe14JkgSgLUJXay80DF",
+        "assistantId": ASSISTANT_ID,
 
-        "from_number": "+918031274555",
+        "from_number": FROM_NUMBER,
 
         "session_id": session_id,
     }
@@ -54,4 +58,10 @@ async def create_appointment_api(
             timeout=20,
         )
 
-        return response.json()
+        response.raise_for_status()
+
+        result = response.json()
+
+        logger.info(f"Appointment API response: {result}")
+
+        return result

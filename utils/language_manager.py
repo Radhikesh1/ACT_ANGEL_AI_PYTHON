@@ -55,7 +55,7 @@ def set_language(
 
     session["language"] = language
 
-    session["locked"] = True
+    session["locked"] = False
 
     session["pending"] = None
 

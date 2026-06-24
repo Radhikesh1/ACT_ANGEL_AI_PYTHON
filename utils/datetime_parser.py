@@ -1,18 +1,26 @@
 import dateparser
+from loguru import logger
 
 
 def parse_datetime(text):
 
-    dt = dateparser.parse(
-        text,
-        settings={
-            "PREFER_DATES_FROM": "future",
-        }
-    )
+    try:
 
-    if not dt:
+        dt = dateparser.parse(
+            text,
+            settings={
+                "PREFER_DATES_FROM": "future",
+                "TIMEZONE": "Asia/Kolkata",
+            }
+        )
+
+        if not dt:
+            return None
+
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+    except Exception as e:
+
+        logger.error(f"DateTime parsing failed for '{text}': {e}")
+
         return None
-
-    return dt.strftime(
-        "%Y-%m-%d %H:%M:%S"
-    )
