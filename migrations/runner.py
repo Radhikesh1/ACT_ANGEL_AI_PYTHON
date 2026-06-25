@@ -196,6 +196,23 @@ async def migration_006_add_recording_url(conn: AsyncConnection):
         logger.info("[Migration 006] call_logs.recording_url already exists — skipped")
 
 
+async def migration_007_add_cost_columns(conn: AsyncConnection):
+    """Add cost_breakdown (JSON text) and total_cost (float) to call_logs."""
+    if not await _table_exists(conn, "call_logs"):
+        logger.info("[Migration 007] call_logs table not found — skipped")
+        return
+
+    for col, definition in [
+        ("cost_breakdown", "TEXT"),
+        ("total_cost",     "DOUBLE PRECISION"),
+    ]:
+        if not await _column_exists(conn, "call_logs", col):
+            await conn.execute(text(f"ALTER TABLE call_logs ADD COLUMN {col} {definition}"))
+            logger.info(f"[Migration 007] Added call_logs.{col} column")
+        else:
+            logger.info(f"[Migration 007] call_logs.{col} already exists — skipped")
+
+
 # ── Registry — add new migrations here in order ───────────────────────────────
 
 MIGRATIONS = [
@@ -205,6 +222,7 @@ MIGRATIONS = [
     ("004_add_webhook_urls",        migration_004_add_webhook_urls),
     ("005_create_call_logs",        migration_005_create_call_logs),
     ("006_add_recording_url",       migration_006_add_recording_url),
+    ("007_add_cost_columns",        migration_007_add_cost_columns),
 ]
 
 

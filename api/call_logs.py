@@ -1,3 +1,4 @@
+import json
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -12,6 +13,12 @@ router = APIRouter()
 
 
 def _serialize(c: CallLog) -> dict:
+    cost_breakdown = None
+    if c.cost_breakdown:
+        try:
+            cost_breakdown = json.loads(c.cost_breakdown)
+        except Exception:
+            pass
     return {
         "id": str(c.id),
         "session_id": c.session_id,
@@ -25,6 +32,8 @@ def _serialize(c: CallLog) -> dict:
         "error_message": c.error_message,
         "chars_used": c.chars_used,
         "recording_url": c.recording_url,
+        "cost_breakdown": cost_breakdown,
+        "total_cost": c.total_cost,
         "started_at": c.started_at.isoformat() if c.started_at else None,
         "ended_at": c.ended_at.isoformat() if c.ended_at else None,
     }

@@ -1,3 +1,4 @@
+import asyncio
 import os
 import time
 import json
@@ -32,9 +33,11 @@ from processors.noise_gate_processor import NoiseFilterProcessor
 from system_prompt import SYSTEM_PROMPT
 from utils.session_state import call_sessions
 from utils.tts_factory import create_tts
+from utils import call_log_manager
 from database.connection import AsyncSessionLocal
 from database.models import CallLog
 from services.recording_service import start_recording, fetch_and_upload
+from services.cost_service import calculate_cost, cost_to_json
 
 load_dotenv()
 
@@ -123,6 +126,111 @@ async def _call_end_of_call_webhook(
         logger.warning(f"[EndOfCall] Webhook call failed ({url}): {e}")
 
 
+async def _finalize_call(
+    log_id: uuid.UUID | None,
+    call_id: str,
+    agent_id: str,
+    assistant_config: dict,
+    customer_number: str,
+    to_number: str,
+    duration: int,
+    chat_messages: list,
+    chars_used: int,
+    call_status: str,
+    error_message: str | None,
+    start_ts: float,
+    started_at: datetime,
+    ended_at: datetime,
+    end_of_call_url: str | None,
+    llm_model: str,
+):
+    """Detached task: update (or insert) call log, fire webhooks, then save recording URL.
+    Runs independently of the websocket handler so CancelledError cannot abort it."""
+
+    # 1. Update the in-progress log row that was created at call start.
+    #    Fall back to INSERT if the initial creation failed (log_id is None).
+    try:
+        async with AsyncSessionLocal() as db:
+            if log_id is not None:
+                log = await db.get(CallLog, log_id)
+                if log:
+                    cost = calculate_cost(duration, chat_messages, llm_model)
+                    log.duration = duration
+                    log.chat = json.dumps(chat_messages)
+                    log.call_status = call_status
+                    log.error_message = error_message
+                    log.chars_used = chars_used
+                    log.cost_breakdown = cost_to_json(cost)
+                    log.total_cost = cost["total_usd"]
+                    log.ended_at = ended_at
+                    await db.commit()
+                    logger.info(
+                        f"[CallLog] Updated {log_id} "
+                        f"(duration={duration}s, status={call_status}, cost=${cost['total_usd']:.4f})"
+                    )
+                else:
+                    log_id = None  # row disappeared — fall through to INSERT
+            if log_id is None:
+                cost = calculate_cost(duration, chat_messages, llm_model)
+                log_id = uuid.uuid4()
+                db.add(CallLog(
+                    id=log_id,
+                    session_id=call_id,
+                    assistant_id=uuid.UUID(agent_id) if agent_id else None,
+                    assistant_name=assistant_config.get("name") or "",
+                    from_number=customer_number,
+                    to_number=to_number,
+                    duration=duration,
+                    chat=json.dumps(chat_messages),
+                    call_status=call_status,
+                    error_message=error_message,
+                    chars_used=chars_used,
+                    recording_url=None,
+                    cost_breakdown=cost_to_json(cost),
+                    total_cost=cost["total_usd"],
+                    started_at=started_at,
+                    ended_at=ended_at,
+                ))
+                await db.commit()
+                logger.info(f"[CallLog] Inserted {log_id} (fallback, duration={duration}s, cost=${cost['total_usd']:.4f})")
+    except Exception as db_err:
+        logger.error(f"[CallLog] Failed to finalize call log: {db_err}")
+        log_id = None
+
+    # 2. Fire end-of-call webhook
+    if end_of_call_url:
+        try:
+            await _call_end_of_call_webhook(
+                url=end_of_call_url,
+                session_id=call_id,
+                call_id=call_id,
+                agent_id=agent_id,
+                from_number=customer_number,
+                to_number=to_number,
+                messages=[{"role": "system", "content": ""}, *chat_messages],
+                start_ts=start_ts,
+                assistant_config=assistant_config,
+                call_status=call_status,
+                error_message=error_message,
+            )
+        except Exception as wh_err:
+            logger.warning(f"[EndOfCall] Webhook error: {wh_err}")
+
+    # 3. Fetch recording from Plivo → upload to Cloudinary → patch DB row
+    if log_id:
+        try:
+            recording_url = await fetch_and_upload(call_id)
+            if recording_url:
+                async with AsyncSessionLocal() as db:
+                    saved = await db.get(CallLog, log_id)
+                    if saved:
+                        saved.recording_url = recording_url
+                        await db.commit()
+                        logger.info(f"[CallLog] Recording URL saved for {log_id}")
+        except Exception as rec_err:
+            logger.error(f"[CallLog] Recording update failed for {log_id}: {rec_err}")
+
+
 async def run_bot(websocket_client):
 
     # -----------------------------------
@@ -153,19 +261,55 @@ async def run_bot(websocket_client):
     prefetch_url: str | None = assistant_config.get("prefetch_webhook_url") or None
     end_of_call_url: str | None = assistant_config.get("end_of_call_webhook_url") or None
 
-    logger.info(
-        f"Starting bot for call {call_id} | "
-        f"assistant: {assistant_config.get('name', 'default')} | "
-        f"model: {llm_model}"
+    # Start per-call log file: logs/calls/{call_id}.log
+    clog = call_log_manager.start(call_id)
+
+    clog.info(
+        f"Call connected | call_id={call_id} | "
+        f"from={customer_number} | to={to_number} | "
+        f"assistant={assistant_config.get('name', 'default')} | "
+        f"model={llm_model}"
     )
 
     start_ts = time.time()
+    started_at = datetime.now()
+
+    # -----------------------------------
+    # Create initial call log (in-progress)
+    # -----------------------------------
+
+    log_id: uuid.UUID | None = None
+    try:
+        async with AsyncSessionLocal() as db:
+            log_id = uuid.uuid4()
+            db.add(CallLog(
+                id=log_id,
+                session_id=call_id,
+                assistant_id=uuid.UUID(agent_id) if agent_id else None,
+                assistant_name=assistant_config.get("name") or "",
+                from_number=customer_number,
+                to_number=to_number,
+                duration=0,
+                chat=None,
+                call_status="in-progress",
+                error_message=None,
+                chars_used=0,
+                recording_url=None,
+                started_at=started_at,
+                ended_at=started_at,
+            ))
+            await db.commit()
+            clog.info(f"[DB] Created in-progress log {log_id}")
+    except Exception as e:
+        clog.error(f"[DB] Failed to create initial log: {e}")
+        log_id = None
 
     # -----------------------------------
     # Start call recording (optional)
     # -----------------------------------
 
     await start_recording(call_id)
+    clog.info("[Recording] Recording started")
 
     # -----------------------------------
     # Prefetch webhook (optional)
@@ -305,74 +449,49 @@ async def run_bot(websocket_client):
     # -----------------------------------
 
     runner = PipelineRunner()
-    logger.info("Pipeline running")
+    clog.info("Pipeline running")
     call_status = "user-ended"
     error_message = None
     try:
         await runner.run(task)
-    except Exception as e:
-        call_status = "error"
-        error_message = str(e)
+    except BaseException as e:
+        if not isinstance(e, asyncio.CancelledError):
+            call_status = "error"
+            error_message = str(e)
+            clog.error(f"Pipeline error: {e}")
         raise
     finally:
-        ended_at = datetime.utcnow()
+        ended_at = datetime.now()
         duration = int(time.time() - start_ts)
-        chat_messages = [
+        clog.info(f"Call ended | duration={duration}s | status={call_status}")
+        # Prepend welcome message so the transcript starts from the assistant greeting
+        chat_messages = [{"role": "assistant", "content": welcome_message}] + [
             {"role": m["role"], "content": m.get("content") or ""}
             for m in context.messages
             if m.get("role") != "system"
         ]
         chars_used = sum(len(m["content"]) for m in chat_messages)
 
-        # Fetch recording from Plivo and upload to Cloudinary
-        recording_url: str | None = None
-        try:
-            recording_url = await fetch_and_upload(call_id)
-        except Exception as rec_err:
-            logger.error(f"[Recording] Unexpected error: {rec_err}")
-
-        # Save to database
-        try:
-            async with AsyncSessionLocal() as db:
-                log = CallLog(
-                    id=uuid.uuid4(),
-                    session_id=call_id,
-                    assistant_id=uuid.UUID(agent_id) if agent_id else None,
-                    assistant_name=assistant_config.get("name") or "",
-                    from_number=customer_number,
-                    to_number=to_number,
-                    duration=duration,
-                    chat=json.dumps(chat_messages),
-                    call_status=call_status,
-                    error_message=error_message,
-                    chars_used=chars_used,
-                    recording_url=recording_url,
-                    started_at=datetime.utcfromtimestamp(start_ts),
-                    ended_at=ended_at,
-                )
-                db.add(log)
-                await db.commit()
-                logger.info(
-                    f"[CallLog] Saved call log for session {call_id} "
-                    f"(duration={duration}s, recording={'yes' if recording_url else 'no'})"
-                )
-        except Exception as db_err:
-            logger.error(f"[CallLog] Failed to save call log: {db_err}")
-
-        # Fire end-of-call webhook
-        if end_of_call_url:
-            await _call_end_of_call_webhook(
-                url=end_of_call_url,
-                session_id=call_id,
-                call_id=call_id,
-                agent_id=agent_id,
-                from_number=customer_number,
-                to_number=to_number,
-                messages=context.messages,
-                start_ts=start_ts,
-                assistant_config=assistant_config,
-                call_status=call_status,
-                error_message=error_message,
-            )
-
         call_sessions.pop(call_id, None)
+        call_log_manager.end(call_id)  # flush & close per-call log file
+
+        # Spawn a detached task so CancelledError from WebSocket disconnect
+        # cannot abort the DB save or webhook calls.
+        asyncio.get_event_loop().create_task(_finalize_call(
+            log_id=log_id,
+            call_id=call_id,
+            agent_id=agent_id,
+            assistant_config=assistant_config,
+            customer_number=customer_number,
+            to_number=to_number,
+            duration=duration,
+            chat_messages=chat_messages,
+            chars_used=chars_used,
+            call_status=call_status,
+            error_message=error_message,
+            start_ts=start_ts,
+            started_at=started_at,
+            ended_at=ended_at,
+            end_of_call_url=end_of_call_url,
+            llm_model=llm_model,
+        ))

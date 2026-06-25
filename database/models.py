@@ -46,6 +46,8 @@ class PlivoNumber(Base):
     )
     number: Mapped[str] = mapped_column(String(30), unique=True, nullable=False)
     friendly_name: Mapped[str] = mapped_column(String(255), default="")
+    country: Mapped[str] = mapped_column(String(100), default="")
+    number_type: Mapped[str] = mapped_column(String(50), default="")
     assistant_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("assistants.id", ondelete="SET NULL"), nullable=True
     )
@@ -75,5 +77,7 @@ class CallLog(Base):
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     chars_used: Mapped[int] = mapped_column(Integer, default=0)
     recording_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cost_breakdown: Mapped[str | None] = mapped_column(Text, nullable=True)
+    total_cost: Mapped[float | None] = mapped_column(Float, nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     ended_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
