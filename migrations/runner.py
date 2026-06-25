@@ -135,12 +135,76 @@ async def migration_003_add_assistant_status(conn: AsyncConnection):
     logger.info("[Migration 003] Added assistants.status column")
 
 
+async def migration_004_add_webhook_urls(conn: AsyncConnection):
+    """Add prefetch_webhook_url and end_of_call_webhook_url columns to assistants."""
+    if not await _table_exists(conn, "assistants"):
+        logger.info("[Migration 004] assistants table not found — skipped")
+        return
+
+    for col in ("prefetch_webhook_url", "end_of_call_webhook_url"):
+        if not await _column_exists(conn, "assistants", col):
+            await conn.execute(text(
+                f"ALTER TABLE assistants ADD COLUMN {col} TEXT"
+            ))
+            logger.info(f"[Migration 004] Added assistants.{col} column")
+        else:
+            logger.info(f"[Migration 004] assistants.{col} already exists — skipped")
+
+
+async def migration_005_create_call_logs(conn: AsyncConnection):
+    """Create call_logs table to store per-call details."""
+    if await _table_exists(conn, "call_logs"):
+        logger.info("[Migration 005] call_logs table already exists — skipped")
+        return
+
+    await conn.execute(text("""
+        CREATE TABLE call_logs (
+            id             UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+            session_id     VARCHAR(255) NOT NULL,
+            assistant_id   UUID         REFERENCES assistants(id) ON DELETE SET NULL,
+            assistant_name VARCHAR(255) DEFAULT '',
+            from_number    VARCHAR(50)  DEFAULT '',
+            to_number      VARCHAR(50)  DEFAULT '',
+            duration       INTEGER      DEFAULT 0,
+            chat           TEXT,
+            call_status    VARCHAR(50)  DEFAULT 'user-ended',
+            error_message  TEXT,
+            chars_used     INTEGER      DEFAULT 0,
+            started_at     TIMESTAMPTZ  NOT NULL,
+            ended_at       TIMESTAMPTZ  NOT NULL
+        )
+    """))
+    await conn.execute(text(
+        "CREATE INDEX idx_call_logs_session_id ON call_logs(session_id)"
+    ))
+    await conn.execute(text(
+        "CREATE INDEX idx_call_logs_started_at ON call_logs(started_at DESC)"
+    ))
+    logger.info("[Migration 005] Created call_logs table")
+
+
+async def migration_006_add_recording_url(conn: AsyncConnection):
+    """Add recording_url column to call_logs."""
+    if not await _table_exists(conn, "call_logs"):
+        logger.info("[Migration 006] call_logs table not found — skipped")
+        return
+
+    if not await _column_exists(conn, "call_logs", "recording_url"):
+        await conn.execute(text("ALTER TABLE call_logs ADD COLUMN recording_url TEXT"))
+        logger.info("[Migration 006] Added call_logs.recording_url column")
+    else:
+        logger.info("[Migration 006] call_logs.recording_url already exists — skipped")
+
+
 # ── Registry — add new migrations here in order ───────────────────────────────
 
 MIGRATIONS = [
     ("001_create_assistants",       migration_001_create_assistants),
     ("002_create_plivo_numbers",    migration_002_create_plivo_numbers),
     ("003_add_assistant_status",    migration_003_add_assistant_status),
+    ("004_add_webhook_urls",        migration_004_add_webhook_urls),
+    ("005_create_call_logs",        migration_005_create_call_logs),
+    ("006_add_recording_url",       migration_006_add_recording_url),
 ]
 
 

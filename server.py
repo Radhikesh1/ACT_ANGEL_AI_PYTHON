@@ -16,6 +16,7 @@ from voice_agent import run_bot
 from api.auth import router as auth_router
 from api.assistants import router as assistants_router
 from api.numbers import router as numbers_router
+from api.call_logs import router as call_logs_router
 
 load_dotenv()
 
@@ -55,6 +56,7 @@ async def startup():
 app.include_router(auth_router, prefix="/api")
 app.include_router(assistants_router, prefix="/api")
 app.include_router(numbers_router, prefix="/api")
+app.include_router(call_logs_router, prefix="/api")
 
 # --------------------------------------------------
 # Plivo Inbound Call — returns XML + stores config
@@ -91,10 +93,13 @@ async def get_answer_xml(request: Request):
                     "temperature": asst.temperature,
                     "business_hours_start": asst.business_hours_start,
                     "business_hours_end": asst.business_hours_end,
+                    "prefetch_webhook_url": asst.prefetch_webhook_url,
+                    "end_of_call_webhook_url": asst.end_of_call_webhook_url,
                 }
 
     call_sessions[call_uuid] = {
         "from_number": from_number,
+        "to_number": to_number,
         "assistant_config": assistant_config,
     }
 

@@ -8,3 +8,4 @@ asyncpg
 passlib[bcrypt]
 python-jose[cryptography]
 httpx
+cloudinary

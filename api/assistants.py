@@ -29,6 +29,8 @@ class AssistantIn(BaseModel):
     temperature: float = 0.2
     business_hours_start: str = "10:30"
     business_hours_end: str = "18:30"
+    prefetch_webhook_url: str | None = None
+    end_of_call_webhook_url: str | None = None
 
 
 class AssistantUpdate(BaseModel):
@@ -41,6 +43,8 @@ class AssistantUpdate(BaseModel):
     temperature: float | None = None
     business_hours_start: str | None = None
     business_hours_end: str | None = None
+    prefetch_webhook_url: str | None = None
+    end_of_call_webhook_url: str | None = None
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -57,6 +61,8 @@ def _serialize(a: Assistant) -> dict:
         "temperature": a.temperature,
         "business_hours_start": a.business_hours_start,
         "business_hours_end": a.business_hours_end,
+        "prefetch_webhook_url": a.prefetch_webhook_url,
+        "end_of_call_webhook_url": a.end_of_call_webhook_url,
         "status": a.status,
         "created_at": a.created_at.isoformat() if a.created_at else None,
         "updated_at": a.updated_at.isoformat() if a.updated_at else None,
