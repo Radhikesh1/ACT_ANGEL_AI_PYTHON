@@ -44,6 +44,8 @@ class LanguageProcessor(FrameProcessor):
         direction,
     ):
 
+        await super().process_frame(frame, direction)
+
         # ----------------------------------------
         # Ignore Non-Text Frames
         # ----------------------------------------

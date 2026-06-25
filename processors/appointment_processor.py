@@ -48,6 +48,8 @@ class AppointmentProcessor(FrameProcessor):
         direction,
     ):
 
+        await super().process_frame(frame, direction)
+
         if not isinstance(frame, TextFrame):
 
             await self.push_frame(
