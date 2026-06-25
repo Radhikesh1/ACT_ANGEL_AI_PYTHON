@@ -48,7 +48,8 @@ ACT_ANGEL_AI_PYTHON/
 ├── voice_agent.py               # Voice pipeline orchestrator (builds & runs Pipecat pipeline per call)
 ├── system_prompt.py             # Default fallback system prompt
 ├── requirements.txt
-├── .env                         # API keys & config (see below)
+├── .env                         # API keys & config (see below — gitignored)
+├── docker-compose.dev.yml       # Local PostgreSQL container for development
 │
 ├── migrations/                  # Database migration runner
 │   └── runner.py                # Checks & applies schema changes on startup
@@ -59,7 +60,7 @@ ACT_ANGEL_AI_PYTHON/
 │
 ├── api/                         # REST API routers
 │   ├── auth.py                  # POST /api/auth/login, GET /api/auth/me, POST /api/auth/logout
-│   ├── assistants.py            # CRUD /api/assistants
+│   ├── assistants.py            # CRUD /api/assistants + publish/unpublish
 │   ├── numbers.py               # Plivo number management /api/numbers
 │   └── dependencies.py          # JWT cookie guard (get_current_user)
 │
@@ -102,7 +103,7 @@ ACT_ANGEL_AI_PYTHON/
 | `id` | UUID | Primary key |
 | `name` | String | Display name |
 | `system_prompt` | Text | Full LLM system prompt |
-| `welcome_message` | String | First thing Ciya says when call connects |
+| `welcome_message` | String | First thing the assistant says when call connects |
 | `default_language` | String | `english` / `hindi` / `bengali` / `telugu` / `gujarati` |
 | `voice` | String | Sarvam TTS voice name |
 | `llm_model` | String | `gpt-4o-mini` or `gpt-4o` |
@@ -140,8 +141,10 @@ ACT_ANGEL_AI_PYTHON/
 | `GET` | `/api/assistants` | List all assistants |
 | `POST` | `/api/assistants` | Create assistant |
 | `GET` | `/api/assistants/{id}` | Get one assistant |
-| `PUT` | `/api/assistants/{id}` | Update assistant |
-| `DELETE` | `/api/assistants/{id}` | Delete assistant |
+| `PUT` | `/api/assistants/{id}` | Update assistant (blocked if `status=production`) |
+| `DELETE` | `/api/assistants/{id}` | Delete assistant (blocked if `status=production`) |
+| `POST` | `/api/assistants/{id}/publish` | Move to production |
+| `POST` | `/api/assistants/{id}/unpublish` | Move back to development |
 
 ### Phone Numbers
 | Method | Path | Description |
@@ -185,6 +188,17 @@ Language is auto-detected from caller speech. A confirmation step prevents accid
 
 ---
 
+## Development / Production Workflow
+
+Each assistant has a `status` field:
+
+- **Development** — editable; all fields, publish/delete allowed
+- **Production** — locked; PUT and DELETE return `409 Conflict`; must unpublish first
+
+All state changes (create, update, publish, unpublish, delete) are logged via loguru with field-level diff for updates.
+
+---
+
 ## Environment Variables
 
 ```env
@@ -214,60 +228,123 @@ ADMIN_PASSWORD=your-secure-password
 
 `DOMAIN` is the public hostname used in the Plivo XML response WebSocket URL. In production this is your server domain; in development use a Cloudflare tunnel.
 
+> **Note:** Passwords or values containing `@` or `!` in `DATABASE_URL` must be percent-encoded: `@` → `%40`, `!` → `%21`.
+
 ---
 
-## Setup & Running
+## Local Development Setup
 
-### 1. Create virtual environment
+### 1. Start the local database
 
-```bash
-python -m venv venv
-venv\Scripts\activate        # Windows
-# source venv/bin/activate   # Linux/macOS
+```powershell
+docker compose -f docker-compose.dev.yml up -d
 ```
 
-### 2. Install dependencies
+This starts a PostgreSQL 16 container on port **5433** (port 5432 may already be in use by a local Postgres installation).
 
-```bash
+### 2. Create virtual environment
+
+```powershell
+python -m venv venv
+.\venv\Scripts\activate
+```
+
+### 3. Install dependencies
+
+```powershell
 pip install -r requirements.txt
 ```
 
-### 3. Configure environment
+### 4. Configure environment
 
-Create `.env` in the project root and fill in all values from the section above.
+Create `.env` in the project root:
 
-### 4. Start the server
-
-```bash
-python server.py
+```env
+DATABASE_URL=postgresql+asyncpg://actangel:actangel_dev_2026@localhost:5433/act_angel_ai
+SECRET_KEY=any-random-string-for-dev
+ADMIN_USERID=cloudsteer
+ADMIN_PASSWORD=your-password
+OPENAI_API_KEY=sk-proj-...
+SARVAM_API_KEY=sk_...
+PLIVO_AUTH_ID=...
+PLIVO_AUTH_TOKEN=...
+PLIVO_PHONE_NUMBER=+91...
+DOMAIN=your-tunnel.trycloudflare.com
+APPOINTMENT_API_URL=https://hook.eu2.make.com/...
+ASSISTANT_ID=...
+FROM_NUMBER=+91...
 ```
 
-Server starts on `http://0.0.0.0:8000`. On startup, the migration runner checks which migrations have been applied and runs any new ones automatically — safe to run on both a fresh database and an existing one.
+### 5. Start the backend
 
-### 5. Expose with Cloudflare Tunnel (development)
+```powershell
+.\venv\Scripts\python.exe server.py
+```
 
-```bash
+Server starts on `http://localhost:8000`. On startup, the migration runner automatically creates or updates all tables.
+
+### 6. Expose with Cloudflare Tunnel (for live Plivo calls)
+
+```powershell
 cloudflared tunnel --url http://localhost:8000
 ```
 
-Copy the generated URL (e.g. `something.trycloudflare.com`) and set it as `DOMAIN` in `.env`.
+Copy the generated URL and set it as `DOMAIN` in `.env`.
 
-### 6. Use the dashboard
+---
 
-Open the frontend at `http://localhost:3000` (see the frontend repo). Log in with `ADMIN_EMAIL` / `ADMIN_PASSWORD`, then:
+## Frontend Setup (CHAT_WEB)
 
-1. Go to **Assistants** → create an assistant with your system prompt and settings
-2. Go to **Phone Numbers** → assign a Plivo number to the assistant (webhook is set automatically)
-3. Call the number — the configured assistant handles the call
+The management dashboard lives in the `CHAT_WEB/` sibling repo.
+
+### 1. Install dependencies
+
+```powershell
+cd ..\CHAT_WEB
+npm install
+```
+
+### 2. Configure local API target
+
+Create `CHAT_WEB/.env.local` (gitignored — never commit):
+
+```env
+PUBLIC_API_URL=http://localhost:8000
+```
+
+### 3. Start the frontend
+
+```powershell
+npm run dev
+```
+
+Frontend runs on `http://localhost:3000`. All `/api/*` requests are proxied to `PUBLIC_API_URL`.
+
+### 4. Log in
+
+Open `http://localhost:3000` → log in with `ADMIN_USERID` / `ADMIN_PASSWORD` → redirected to the **Assistants** dashboard.
+
+---
+
+## Production Deployment
+
+On the AWS server the backend's `.env` should use:
+
+```env
+DATABASE_URL=postgresql+asyncpg://user:password@db:5432/act_angel_ai
+```
+
+where `db` is the internal Docker network hostname for the PostgreSQL container. Migrations run automatically on server start — no manual step required.
+
+The frontend build is served separately. Set `PUBLIC_API_URL=https://actangels.com` in the build environment so the Vite proxy targets the production API.
 
 ---
 
 ## Adding a Database Migration
 
-To add a new schema change:
-
 1. Open `migrations/runner.py`
 2. Write a new async function — always check first, act second:
+
 ```python
 async def migration_004_add_my_column(conn):
     if await _column_exists(conn, "assistants", "my_column"):
@@ -276,12 +353,14 @@ async def migration_004_add_my_column(conn):
     await conn.execute(text("ALTER TABLE assistants ADD COLUMN my_column TEXT"))
     logger.info("[Migration 004] Added my_column")
 ```
+
 3. Register it in the `MIGRATIONS` list at the bottom of the file:
+
 ```python
 ("004_add_my_column", migration_004_add_my_column),
 ```
 
-The runner tracks applied migrations in a `schema_migrations` table and will only run each one once.
+The runner tracks applied migrations in a `schema_migrations` table and runs each one only once.
 
 ---
 
@@ -297,17 +376,13 @@ All per-call state is in-memory and scoped to `CallUUID`. It is lost on server r
 
 ---
 
-## Frontend (separate repo)
-
-The management dashboard lives in `CHAT_WEB/`. It is a React 19 + Vite app using Wouter routing, TanStack Query, and shadcn/ui components.
-
-Pages added for this platform:
+## Frontend Pages (CHAT_WEB)
 
 | Route | Page |
 |---|---|
-| `/assistants` | List all assistants — create, edit, delete |
+| `/login` | Login form |
+| `/assistants` | List all assistants — create, publish, delete |
 | `/assistants/new` | Create assistant form |
-| `/assistants/:id` | Edit assistant form |
+| `/assistants/:id` | Edit assistant form (locked when production) |
 | `/numbers` | Plivo number table — assign/unassign assistants |
-
-The frontend proxies `/api/*` to the backend via Vite dev proxy (`PUBLIC_API_URL` in `.env`).
+| `/chat` | Chat UI |

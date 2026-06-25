@@ -97,7 +97,6 @@ temp/
 *.bak
 
 # Audio / media artifacts
-frames/
 *.wav
 *.mp3
 *.ogg
@@ -116,7 +115,6 @@ pm2.log
 .pm2/
 
 # Data / documents
-data/
 docs/
 attached_assets/
 

@@ -49,14 +49,14 @@ async def login(body: LoginRequest, response: Response):
         secure=False,  # set True when serving over HTTPS in production
     )
 
-    return {"userId": ADMIN_USERID, "role": "admin", "displayName": "Admin"}
+    return {"userId": ADMIN_USERID, "role": "SAD", "displayName": "Admin"}
 
 
 @router.get("/auth/me")
 async def get_me(current_user: dict = Depends(get_current_user)):
     return {
         "userId": current_user["user_id"],
-        "role": "admin",
+        "role": "SAD",
         "displayName": "Admin",
     }
 
@@ -65,3 +65,15 @@ async def get_me(current_user: dict = Depends(get_current_user)):
 async def logout(response: Response):
     response.delete_cookie("access_token")
     return {"message": "Logged out"}
+
+
+@router.get("/admin/organizations")
+async def list_organizations(current_user: dict = Depends(get_current_user)):
+    """Return the single default organisation for this single-tenant deployment."""
+    return [
+        {
+            "id": "default",
+            "name": "ACT Angel AI",
+            "slug": "act-angel-ai",
+        }
+    ]
