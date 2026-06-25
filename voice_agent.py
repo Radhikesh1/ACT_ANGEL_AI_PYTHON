@@ -452,6 +452,7 @@ async def run_bot(websocket_client):
     clog.info("Pipeline running")
     call_status = "user-ended"
     error_message = None
+    pipeline_start_ts = time.time()   # measure only actual voice call time
     try:
         await runner.run(task)
     except BaseException as e:
@@ -462,7 +463,7 @@ async def run_bot(websocket_client):
         raise
     finally:
         ended_at = datetime.now()
-        duration = int(time.time() - start_ts)
+        duration = int(time.time() - pipeline_start_ts)
         clog.info(f"Call ended | duration={duration}s | status={call_status}")
         # Prepend welcome message so the transcript starts from the assistant greeting
         chat_messages = [{"role": "assistant", "content": welcome_message}] + [

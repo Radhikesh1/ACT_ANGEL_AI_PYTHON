@@ -17,6 +17,7 @@ from api.auth import router as auth_router
 from api.assistants import router as assistants_router
 from api.numbers import router as numbers_router
 from api.call_logs import router as call_logs_router
+from api.settings import router as settings_router
 
 load_dotenv()
 
@@ -57,6 +58,7 @@ app.include_router(auth_router, prefix="/api")
 app.include_router(assistants_router, prefix="/api")
 app.include_router(numbers_router, prefix="/api")
 app.include_router(call_logs_router, prefix="/api")
+app.include_router(settings_router, prefix="/api")
 
 # --------------------------------------------------
 # Plivo Inbound Call — returns XML + stores config

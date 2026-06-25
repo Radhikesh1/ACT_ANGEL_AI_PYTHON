@@ -213,6 +213,38 @@ async def migration_007_add_cost_columns(conn: AsyncConnection):
             logger.info(f"[Migration 007] call_logs.{col} already exists — skipped")
 
 
+async def migration_008_add_number_details(conn: AsyncConnection):
+    """Add country and number_type columns to plivo_numbers."""
+    if not await _table_exists(conn, "plivo_numbers"):
+        logger.info("[Migration 008] plivo_numbers table not found — skipped")
+        return
+
+    for col, definition in [
+        ("country",     "VARCHAR(100) DEFAULT ''"),
+        ("number_type", "VARCHAR(50)  DEFAULT ''"),
+    ]:
+        if not await _column_exists(conn, "plivo_numbers", col):
+            await conn.execute(text(f"ALTER TABLE plivo_numbers ADD COLUMN {col} {definition}"))
+            logger.info(f"[Migration 008] Added plivo_numbers.{col} column")
+        else:
+            logger.info(f"[Migration 008] plivo_numbers.{col} already exists — skipped")
+
+
+async def migration_009_create_app_settings(conn: AsyncConnection):
+    """Create app_settings key-value table for runtime configuration."""
+    if await _table_exists(conn, "app_settings"):
+        logger.info("[Migration 009] app_settings table already exists — skipped")
+        return
+
+    await conn.execute(text("""
+        CREATE TABLE app_settings (
+            key   VARCHAR(100) PRIMARY KEY,
+            value TEXT
+        )
+    """))
+    logger.info("[Migration 009] Created app_settings table")
+
+
 # ── Registry — add new migrations here in order ───────────────────────────────
 
 MIGRATIONS = [
@@ -223,6 +255,8 @@ MIGRATIONS = [
     ("005_create_call_logs",        migration_005_create_call_logs),
     ("006_add_recording_url",       migration_006_add_recording_url),
     ("007_add_cost_columns",        migration_007_add_cost_columns),
+    ("008_add_number_details",      migration_008_add_number_details),
+    ("009_create_app_settings",     migration_009_create_app_settings),
 ]
 
 
