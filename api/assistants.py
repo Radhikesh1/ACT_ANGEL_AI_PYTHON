@@ -1,13 +1,13 @@
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from loguru import logger
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.dependencies import get_current_user
+from api.dependencies import get_current_user, get_org_id
 from database.connection import get_db
 from database.models import Assistant
 
@@ -52,6 +52,7 @@ class AssistantUpdate(BaseModel):
 def _serialize(a: Assistant) -> dict:
     return {
         "id": str(a.id),
+        "organization_id": a.organization_id,
         "name": a.name,
         "system_prompt": a.system_prompt,
         "welcome_message": a.welcome_message,
@@ -69,10 +70,12 @@ def _serialize(a: Assistant) -> dict:
     }
 
 
-async def _get_or_404(db: AsyncSession, aid: str) -> Assistant:
+async def _get_or_404(db: AsyncSession, aid: str, org_id: str | None = None) -> Assistant:
     a = await db.get(Assistant, uuid.UUID(aid))
     if not a:
         raise HTTPException(status_code=404, detail="Assistant not found")
+    if org_id and a.organization_id and a.organization_id != org_id:
+        raise HTTPException(status_code=403, detail="Access denied")
     return a
 
 
@@ -80,24 +83,30 @@ async def _get_or_404(db: AsyncSession, aid: str) -> Assistant:
 
 @router.get("/assistants")
 async def list_assistants(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     _: dict = Depends(get_current_user),
 ):
-    result = await db.execute(
-        select(Assistant).order_by(Assistant.created_at.desc())
-    )
+    org_id = get_org_id(request)
+    query = select(Assistant).order_by(Assistant.created_at.desc())
+    if org_id:
+        query = query.where(Assistant.organization_id == org_id)
+    result = await db.execute(query)
     return [_serialize(a) for a in result.scalars().all()]
 
 
 @router.post("/assistants", status_code=201)
 async def create_assistant(
+    request: Request,
     body: AssistantIn,
     db: AsyncSession = Depends(get_db),
     _: dict = Depends(get_current_user),
 ):
+    org_id = get_org_id(request)
     now = datetime.utcnow()
     a = Assistant(
         id=uuid.uuid4(),
+        organization_id=org_id,
         status=DEVELOPMENT,
         created_at=now,
         updated_at=now,
@@ -106,27 +115,31 @@ async def create_assistant(
     db.add(a)
     await db.commit()
     await db.refresh(a)
-    logger.info(f"[Assistant] Created: id={a.id} name='{a.name}'")
+    logger.info(f"[Assistant] Created: id={a.id} name='{a.name}' org={org_id}")
     return _serialize(a)
 
 
 @router.get("/assistants/{aid}")
 async def get_assistant(
     aid: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     _: dict = Depends(get_current_user),
 ):
-    return _serialize(await _get_or_404(db, aid))
+    org_id = get_org_id(request)
+    return _serialize(await _get_or_404(db, aid, org_id))
 
 
 @router.put("/assistants/{aid}")
 async def update_assistant(
     aid: str,
+    request: Request,
     body: AssistantUpdate,
     db: AsyncSession = Depends(get_db),
     _: dict = Depends(get_current_user),
 ):
-    a = await _get_or_404(db, aid)
+    org_id = get_org_id(request)
+    a = await _get_or_404(db, aid, org_id)
 
     if a.status == PRODUCTION:
         raise HTTPException(
@@ -140,17 +153,19 @@ async def update_assistant(
     a.updated_at = datetime.utcnow()
     await db.commit()
     await db.refresh(a)
-    logger.info(f"[Assistant] Updated: id={a.id} name='{a.name}' fields={list(body.model_dump(exclude_none=True).keys())}")
+    logger.info(f"[Assistant] Updated: id={a.id} name='{a.name}'")
     return _serialize(a)
 
 
 @router.delete("/assistants/{aid}", status_code=204)
 async def delete_assistant(
     aid: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     _: dict = Depends(get_current_user),
 ):
-    a = await _get_or_404(db, aid)
+    org_id = get_org_id(request)
+    a = await _get_or_404(db, aid, org_id)
 
     if a.status == PRODUCTION:
         raise HTTPException(
@@ -166,10 +181,12 @@ async def delete_assistant(
 @router.post("/assistants/{aid}/publish")
 async def publish_assistant(
     aid: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     _: dict = Depends(get_current_user),
 ):
-    a = await _get_or_404(db, aid)
+    org_id = get_org_id(request)
+    a = await _get_or_404(db, aid, org_id)
     a.status = PRODUCTION
     a.updated_at = datetime.utcnow()
     await db.commit()
@@ -181,10 +198,12 @@ async def publish_assistant(
 @router.post("/assistants/{aid}/unpublish")
 async def unpublish_assistant(
     aid: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     _: dict = Depends(get_current_user),
 ):
-    a = await _get_or_404(db, aid)
+    org_id = get_org_id(request)
+    a = await _get_or_404(db, aid, org_id)
     a.status = DEVELOPMENT
     a.updated_at = datetime.utcnow()
     await db.commit()

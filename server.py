@@ -103,6 +103,7 @@ async def get_answer_xml(request: Request):
         "from_number": from_number,
         "to_number": to_number,
         "assistant_config": assistant_config,
+        "organization_id": str(asst.organization_id) if assistant_config and asst.organization_id else None,
     }
 
     logger.info(

@@ -130,6 +130,7 @@ async def _finalize_call(
     log_id: uuid.UUID | None,
     call_id: str,
     agent_id: str,
+    organization_id: str | None,
     assistant_config: dict,
     customer_number: str,
     to_number: str,
@@ -163,6 +164,8 @@ async def _finalize_call(
                     log.cost_breakdown = cost_to_json(cost)
                     log.total_cost = cost["total_usd"]
                     log.ended_at = ended_at
+                    if organization_id and not log.organization_id:
+                        log.organization_id = organization_id
                     await db.commit()
                     logger.info(
                         f"[CallLog] Updated {log_id} "
@@ -175,6 +178,7 @@ async def _finalize_call(
                 log_id = uuid.uuid4()
                 db.add(CallLog(
                     id=log_id,
+                    organization_id=organization_id,
                     session_id=call_id,
                     assistant_id=uuid.UUID(agent_id) if agent_id else None,
                     assistant_name=assistant_config.get("name") or "",
@@ -217,6 +221,8 @@ async def _finalize_call(
             logger.warning(f"[EndOfCall] Webhook error: {wh_err}")
 
     # 3. Fetch recording from Plivo → upload to Cloudinary → patch DB row
+    recording_url: str | None = None
+    final_duration: int = duration
     if log_id:
         try:
             recording_url, recording_duration = await fetch_and_upload(call_id)
@@ -227,6 +233,7 @@ async def _finalize_call(
                         saved.recording_url = recording_url
                         if recording_duration and recording_duration > 0:
                             saved.duration = recording_duration
+                            final_duration = recording_duration
                             logger.info(
                                 f"[CallLog] Duration corrected to {recording_duration}s "
                                 f"(from Plivo recording) for {log_id}"
@@ -235,6 +242,45 @@ async def _finalize_call(
                         logger.info(f"[CallLog] Recording URL saved for {log_id}")
         except Exception as rec_err:
             logger.error(f"[CallLog] Recording update failed for {log_id}: {rec_err}")
+
+    # 4. Fire actAngel ingest webhook → WEB Node stores call in its DB
+    ingest_url = os.getenv("ACTANGEL_INGEST_URL")
+    ingest_secret = os.getenv("ACTANGEL_INGEST_SECRET")
+    if ingest_url and organization_id:
+        try:
+            cost_obj: dict = json.loads(cost_to_json(calculate_cost(final_duration, chat_messages, llm_model)))
+            raw_cost = {
+                "llm": cost_obj.get("llm_usd", 0),
+                "stt": cost_obj.get("stt_usd", 0),
+                "phone": cost_obj.get("phone_usd", 0),
+                "platform": cost_obj.get("platform_usd", 0),
+            }
+            payload = {
+                "agent_id": str(agent_id),
+                "session_id": call_id,
+                "organization_id": organization_id,
+                "ts": start_ts,
+                "duration": final_duration,
+                "chat": json.dumps(chat_messages),
+                "voip": {
+                    "from": customer_number,
+                    "to": to_number,
+                    "direction": "inbound",
+                },
+                "recording": {"recording_url": recording_url},
+                "cost_breakdown": raw_cost,
+                "call_status": call_status,
+                "error_message": error_message,
+                "metadata": {},
+            }
+            headers: dict = {"Content-Type": "application/json"}
+            if ingest_secret:
+                headers["X-Internal-Secret"] = ingest_secret
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.post(ingest_url, json=payload, headers=headers)
+                logger.info(f"[ActAngel Ingest] {ingest_url} → {resp.status_code}")
+        except Exception as ingest_err:
+            logger.warning(f"[ActAngel Ingest] Webhook failed: {ingest_err}")
 
 
 async def run_bot(websocket_client):
@@ -252,6 +298,7 @@ async def run_bot(websocket_client):
     customer_number: str = session.get("from_number", "")
     to_number: str = session.get("to_number", "")
     assistant_config: dict = session.get("assistant_config") or {}
+    organization_id: str | None = session.get("organization_id")
 
     # Resolve config — fall back to defaults if no assistant is assigned
     system_prompt: str = assistant_config.get("system_prompt") or SYSTEM_PROMPT
@@ -290,6 +337,7 @@ async def run_bot(websocket_client):
             log_id = uuid.uuid4()
             db.add(CallLog(
                 id=log_id,
+                organization_id=organization_id,
                 session_id=call_id,
                 assistant_id=uuid.UUID(agent_id) if agent_id else None,
                 assistant_name=assistant_config.get("name") or "",
@@ -488,6 +536,7 @@ async def run_bot(websocket_client):
             log_id=log_id,
             call_id=call_id,
             agent_id=agent_id,
+            organization_id=organization_id,
             assistant_config=assistant_config,
             customer_number=customer_number,
             to_number=to_number,

@@ -1,13 +1,13 @@
 import uuid
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from loguru import logger
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.dependencies import get_current_user
+from api.dependencies import get_current_user, get_org_id
 from api.settings import get_plivo_config
 from database.connection import get_db
 from database.models import Assistant, PlivoNumber
@@ -52,6 +52,7 @@ def _serialize(rec: PlivoNumber, asst_map: dict[str, str]) -> dict:
     asst_id = str(rec.assistant_id) if rec.assistant_id else None
     return {
         "number": rec.number,
+        "organization_id": rec.organization_id,
         "friendly_name": rec.friendly_name or "",
         "country": rec.country or "",
         "number_type": rec.number_type or "",
@@ -65,13 +66,22 @@ def _serialize(rec: PlivoNumber, asst_map: dict[str, str]) -> dict:
 
 @router.get("/numbers")
 async def list_numbers(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     _: dict = Depends(get_current_user),
 ):
-    result = await db.execute(select(PlivoNumber))
+    org_id = get_org_id(request)
+    query = select(PlivoNumber)
+    if org_id:
+        query = query.where(PlivoNumber.organization_id == org_id)
+    result = await db.execute(query)
     numbers = result.scalars().all()
 
-    asst_result = await db.execute(select(Assistant))
+    # Build assistant name map scoped to the same org
+    asst_query = select(Assistant)
+    if org_id:
+        asst_query = asst_query.where(Assistant.organization_id == org_id)
+    asst_result = await db.execute(asst_query)
     asst_map: dict[str, str] = {str(a.id): a.name for a in asst_result.scalars().all()}
 
     return [_serialize(n, asst_map) for n in numbers]
@@ -83,10 +93,12 @@ class LookupBody(BaseModel):
 
 @router.post("/numbers/lookup")
 async def lookup_number(
+    request: Request,
     body: LookupBody,
     db: AsyncSession = Depends(get_db),
     _: dict = Depends(get_current_user),
 ):
+    org_id = get_org_id(request)
     cfg = await get_plivo_config(db)
     if not cfg["plivo_auth_id"] or not cfg["plivo_auth_token"]:
         raise HTTPException(status_code=400, detail="Plivo credentials not configured")
@@ -100,8 +112,10 @@ async def lookup_number(
     result = await db.execute(select(PlivoNumber).where(PlivoNumber.number == number))
     rec = result.scalar_one_or_none()
     if not rec:
-        rec = PlivoNumber(id=uuid.uuid4(), number=number)
+        rec = PlivoNumber(id=uuid.uuid4(), number=number, organization_id=org_id)
         db.add(rec)
+    elif org_id and not rec.organization_id:
+        rec.organization_id = org_id
 
     rec.friendly_name = plivo_data.get("alias") or plivo_data.get("number", "")
     rec.country = plivo_data.get("country", "")
@@ -110,7 +124,10 @@ async def lookup_number(
     await db.commit()
     await db.refresh(rec)
 
-    asst_result = await db.execute(select(Assistant))
+    asst_query = select(Assistant)
+    if org_id:
+        asst_query = asst_query.where(Assistant.organization_id == org_id)
+    asst_result = await db.execute(asst_query)
     asst_map = {str(a.id): a.name for a in asst_result.scalars().all()}
     return _serialize(rec, asst_map)
 
@@ -119,14 +136,18 @@ async def lookup_number(
 async def assign_number(
     number: str,
     assistant_id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     _: dict = Depends(get_current_user),
 ):
+    org_id = get_org_id(request)
     cfg = await get_plivo_config(db)
 
     a = await db.get(Assistant, uuid.UUID(assistant_id))
     if not a:
         raise HTTPException(status_code=404, detail="Assistant not found")
+    if org_id and a.organization_id and a.organization_id != org_id:
+        raise HTTPException(status_code=403, detail="Access denied")
 
     result = await db.execute(select(PlivoNumber).where(PlivoNumber.number == number))
     rec = result.scalar_one_or_none()
@@ -142,7 +163,10 @@ async def assign_number(
 
     await db.commit()
 
-    asst_result = await db.execute(select(Assistant))
+    asst_query = select(Assistant)
+    if org_id:
+        asst_query = asst_query.where(Assistant.organization_id == org_id)
+    asst_result = await db.execute(asst_query)
     asst_map = {str(a.id): a.name for a in asst_result.scalars().all()}
     return _serialize(rec, asst_map)
 

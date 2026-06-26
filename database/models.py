@@ -14,6 +14,7 @@ class Assistant(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     system_prompt: Mapped[str] = mapped_column(Text, nullable=False)
     welcome_message: Mapped[str] = mapped_column(
@@ -44,6 +45,7 @@ class PlivoNumber(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     number: Mapped[str] = mapped_column(String(30), unique=True, nullable=False)
     friendly_name: Mapped[str] = mapped_column(String(255), default="")
     country: Mapped[str] = mapped_column(String(100), default="")
@@ -71,6 +73,7 @@ class CallLog(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     session_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     assistant_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("assistants.id", ondelete="SET NULL"), nullable=True

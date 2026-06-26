@@ -1,12 +1,12 @@
 import json
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.dependencies import get_current_user
+from api.dependencies import get_current_user, get_org_id
 from database.connection import get_db
 from database.models import CallLog
 
@@ -22,6 +22,7 @@ def _serialize(c: CallLog) -> dict:
             pass
     return {
         "id": str(c.id),
+        "organization_id": c.organization_id,
         "session_id": c.session_id,
         "assistant_id": str(c.assistant_id) if c.assistant_id else None,
         "assistant_name": c.assistant_name,
@@ -42,24 +43,31 @@ def _serialize(c: CallLog) -> dict:
 
 @router.get("/call-logs")
 async def list_call_logs(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     _: dict = Depends(get_current_user),
 ):
-    result = await db.execute(
-        select(CallLog).order_by(desc(CallLog.started_at)).limit(200)
-    )
+    org_id = get_org_id(request)
+    query = select(CallLog).order_by(desc(CallLog.started_at)).limit(200)
+    if org_id:
+        query = select(CallLog).where(CallLog.organization_id == org_id).order_by(desc(CallLog.started_at)).limit(200)
+    result = await db.execute(query)
     return [_serialize(c) for c in result.scalars().all()]
 
 
 @router.get("/call-logs/{log_id}")
 async def get_call_log(
     log_id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     _: dict = Depends(get_current_user),
 ):
+    org_id = get_org_id(request)
     c = await db.get(CallLog, uuid.UUID(log_id))
     if not c:
         raise HTTPException(status_code=404, detail="Call log not found")
+    if org_id and c.organization_id and c.organization_id != org_id:
+        raise HTTPException(status_code=403, detail="Access denied")
     return _serialize(c)
 
 

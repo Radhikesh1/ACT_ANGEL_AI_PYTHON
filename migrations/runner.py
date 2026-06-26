@@ -245,18 +245,75 @@ async def migration_009_create_app_settings(conn: AsyncConnection):
     logger.info("[Migration 009] Created app_settings table")
 
 
+async def migration_010_add_org_id_assistants(conn: AsyncConnection):
+    """Add organization_id to assistants for multi-tenant support."""
+    if not await _table_exists(conn, "assistants"):
+        logger.info("[Migration 010] assistants table not found — skipped")
+        return
+
+    if not await _column_exists(conn, "assistants", "organization_id"):
+        await conn.execute(text(
+            "ALTER TABLE assistants ADD COLUMN organization_id VARCHAR(36)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_assistants_org_id ON assistants(organization_id)"
+        ))
+        logger.info("[Migration 010] Added assistants.organization_id")
+    else:
+        logger.info("[Migration 010] assistants.organization_id already exists — skipped")
+
+
+async def migration_011_add_org_id_plivo_numbers(conn: AsyncConnection):
+    """Add organization_id to plivo_numbers for multi-tenant support."""
+    if not await _table_exists(conn, "plivo_numbers"):
+        logger.info("[Migration 011] plivo_numbers table not found — skipped")
+        return
+
+    if not await _column_exists(conn, "plivo_numbers", "organization_id"):
+        await conn.execute(text(
+            "ALTER TABLE plivo_numbers ADD COLUMN organization_id VARCHAR(36)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_plivo_numbers_org_id ON plivo_numbers(organization_id)"
+        ))
+        logger.info("[Migration 011] Added plivo_numbers.organization_id")
+    else:
+        logger.info("[Migration 011] plivo_numbers.organization_id already exists — skipped")
+
+
+async def migration_012_add_org_id_call_logs(conn: AsyncConnection):
+    """Add organization_id to call_logs for multi-tenant support."""
+    if not await _table_exists(conn, "call_logs"):
+        logger.info("[Migration 012] call_logs table not found — skipped")
+        return
+
+    if not await _column_exists(conn, "call_logs", "organization_id"):
+        await conn.execute(text(
+            "ALTER TABLE call_logs ADD COLUMN organization_id VARCHAR(36)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_call_logs_org_id ON call_logs(organization_id)"
+        ))
+        logger.info("[Migration 012] Added call_logs.organization_id")
+    else:
+        logger.info("[Migration 012] call_logs.organization_id already exists — skipped")
+
+
 # ── Registry — add new migrations here in order ───────────────────────────────
 
 MIGRATIONS = [
-    ("001_create_assistants",       migration_001_create_assistants),
-    ("002_create_plivo_numbers",    migration_002_create_plivo_numbers),
-    ("003_add_assistant_status",    migration_003_add_assistant_status),
-    ("004_add_webhook_urls",        migration_004_add_webhook_urls),
-    ("005_create_call_logs",        migration_005_create_call_logs),
-    ("006_add_recording_url",       migration_006_add_recording_url),
-    ("007_add_cost_columns",        migration_007_add_cost_columns),
-    ("008_add_number_details",      migration_008_add_number_details),
-    ("009_create_app_settings",     migration_009_create_app_settings),
+    ("001_create_assistants",           migration_001_create_assistants),
+    ("002_create_plivo_numbers",        migration_002_create_plivo_numbers),
+    ("003_add_assistant_status",        migration_003_add_assistant_status),
+    ("004_add_webhook_urls",            migration_004_add_webhook_urls),
+    ("005_create_call_logs",            migration_005_create_call_logs),
+    ("006_add_recording_url",           migration_006_add_recording_url),
+    ("007_add_cost_columns",            migration_007_add_cost_columns),
+    ("008_add_number_details",          migration_008_add_number_details),
+    ("009_create_app_settings",         migration_009_create_app_settings),
+    ("010_add_org_id_assistants",       migration_010_add_org_id_assistants),
+    ("011_add_org_id_plivo_numbers",    migration_011_add_org_id_plivo_numbers),
+    ("012_add_org_id_call_logs",        migration_012_add_org_id_call_logs),
 ]
 
 
