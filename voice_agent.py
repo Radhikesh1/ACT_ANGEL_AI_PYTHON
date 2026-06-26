@@ -219,12 +219,18 @@ async def _finalize_call(
     # 3. Fetch recording from Plivo → upload to Cloudinary → patch DB row
     if log_id:
         try:
-            recording_url = await fetch_and_upload(call_id)
+            recording_url, recording_duration = await fetch_and_upload(call_id)
             if recording_url:
                 async with AsyncSessionLocal() as db:
                     saved = await db.get(CallLog, log_id)
                     if saved:
                         saved.recording_url = recording_url
+                        if recording_duration and recording_duration > 0:
+                            saved.duration = recording_duration
+                            logger.info(
+                                f"[CallLog] Duration corrected to {recording_duration}s "
+                                f"(from Plivo recording) for {log_id}"
+                            )
                         await db.commit()
                         logger.info(f"[CallLog] Recording URL saved for {log_id}")
         except Exception as rec_err:
@@ -478,7 +484,7 @@ async def run_bot(websocket_client):
 
         # Spawn a detached task so CancelledError from WebSocket disconnect
         # cannot abort the DB save or webhook calls.
-        asyncio.get_event_loop().create_task(_finalize_call(
+        asyncio.get_running_loop().create_task(_finalize_call(
             log_id=log_id,
             call_id=call_id,
             agent_id=agent_id,

@@ -2,6 +2,7 @@ import json
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -60,3 +61,24 @@ async def get_call_log(
     if not c:
         raise HTTPException(status_code=404, detail="Call log not found")
     return _serialize(c)
+
+
+class DurationPatch(BaseModel):
+    duration: int
+
+
+@router.patch("/call-logs/{log_id}/duration")
+async def patch_call_log_duration(
+    log_id: str,
+    body: DurationPatch,
+    db: AsyncSession = Depends(get_db),
+    _: dict = Depends(get_current_user),
+):
+    if body.duration <= 0:
+        raise HTTPException(status_code=422, detail="duration must be > 0")
+    c = await db.get(CallLog, uuid.UUID(log_id))
+    if not c:
+        raise HTTPException(status_code=404, detail="Call log not found")
+    c.duration = body.duration
+    await db.commit()
+    return {"id": log_id, "duration": body.duration}

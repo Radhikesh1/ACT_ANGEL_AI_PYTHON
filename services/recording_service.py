@@ -75,18 +75,18 @@ async def start_recording(call_id: str) -> bool:
         return False
 
 
-async def _fetch_plivo_recording_url(call_id: str, max_wait: int = 60) -> str | None:
+async def _fetch_plivo_recording_url(call_id: str, max_wait: int = 60) -> tuple[str, int] | None:
     """
     Poll Plivo until a recording for this call is available.
     Waits up to `max_wait` seconds (checks every 5 s).
-    Returns the Plivo recording URL or None.
+    Returns (recording_url, duration_seconds) or None.
     """
     if not PLIVO_AUTH_ID or not PLIVO_AUTH_TOKEN:
         return None
 
-    deadline = asyncio.get_event_loop().time() + max_wait
+    deadline = asyncio.get_running_loop().time() + max_wait
     async with httpx.AsyncClient(timeout=10) as client:
-        while asyncio.get_event_loop().time() < deadline:
+        while asyncio.get_running_loop().time() < deadline:
             try:
                 resp = await client.get(
                     f"{PLIVO_API}/Recording/",
@@ -96,10 +96,19 @@ async def _fetch_plivo_recording_url(call_id: str, max_wait: int = 60) -> str | 
                 if resp.status_code == 200:
                     objects = resp.json().get("objects", [])
                     if objects:
-                        url = objects[0].get("recording_url") or objects[0].get("url")
+                        rec = objects[0]
+                        url = rec.get("recording_url") or rec.get("url")
                         if url:
-                            logger.info(f"[Recording] Plivo recording ready for {call_id}")
-                            return url
+                            duration_secs = int(
+                                rec.get("recording_duration")
+                                or rec.get("duration")
+                                or 0
+                            )
+                            logger.info(
+                                f"[Recording] Plivo recording ready for {call_id} "
+                                f"(duration={duration_secs}s)"
+                            )
+                            return url, duration_secs
                 await asyncio.sleep(5)
             except Exception as e:
                 logger.warning(f"[Recording] Poll error: {e}")
@@ -144,26 +153,28 @@ def _upload_to_cloudinary(audio_bytes: bytes, call_id: str) -> str | None:
         return None
 
 
-async def fetch_and_upload(call_id: str) -> str | None:
+async def fetch_and_upload(call_id: str) -> tuple[str | None, int | None]:
     """
-    Full pipeline: poll Plivo → download → upload Cloudinary → return URL.
-    Safe to call even if credentials are missing (returns None).
+    Full pipeline: poll Plivo → download → upload Cloudinary.
+    Returns (cloudinary_url, recording_duration_seconds).
+    Both values are None on failure or missing credentials.
     """
     if not all([CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET]):
         logger.info("[Recording] Cloudinary not configured — skipping upload")
-        return None
+        return None, None
 
-    plivo_url = await _fetch_plivo_recording_url(call_id)
-    if not plivo_url:
-        return None
+    result = await _fetch_plivo_recording_url(call_id)
+    if not result:
+        return None, None
+    plivo_url, duration_secs = result
 
     audio_bytes = await _download_plivo_recording(plivo_url)
     if not audio_bytes:
-        return None
+        return None, None
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     cloudinary_url = await loop.run_in_executor(
         None,
         lambda: _upload_to_cloudinary(audio_bytes, call_id),
     )
-    return cloudinary_url
+    return cloudinary_url, duration_secs
