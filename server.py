@@ -8,16 +8,14 @@ from loguru import logger
 from sqlalchemy import select
 
 from database.connection import get_db
-from database.models import PlivoNumber, Assistant
+from database.models import VoiceNumber, Assistant
 from migrations.runner import run_migrations
 from utils.session_state import call_sessions
 from voice_agent import run_bot
 
 from api.auth import router as auth_router
 from api.assistants import router as assistants_router
-from api.numbers import router as numbers_router
 from api.call_logs import router as call_logs_router
-from api.settings import router as settings_router
 
 load_dotenv()
 
@@ -56,9 +54,7 @@ async def startup():
 
 app.include_router(auth_router, prefix="/api")
 app.include_router(assistants_router, prefix="/api")
-app.include_router(numbers_router, prefix="/api")
 app.include_router(call_logs_router, prefix="/api")
-app.include_router(settings_router, prefix="/api")
 
 # --------------------------------------------------
 # Plivo Inbound Call — returns XML + stores config
@@ -77,7 +73,7 @@ async def get_answer_xml(request: Request):
 
     async for db in get_db():
         result = await db.execute(
-            select(PlivoNumber).where(PlivoNumber.number == to_number)
+            select(VoiceNumber).where(VoiceNumber.number == to_number)
         )
         plivo_rec = result.scalar_one_or_none()
 

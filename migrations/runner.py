@@ -24,24 +24,24 @@ DATABASE_URL: str = os.getenv("DATABASE_URL") or ""
 
 # ── Migration helpers ─────────────────────────────────────────────────────────
 
-async def _table_exists(conn: AsyncConnection, table: str) -> bool:
+async def _table_exists(conn: AsyncConnection, table: str, schema: str = "public") -> bool:
     result = await conn.execute(text(
         "SELECT EXISTS ("
         "  SELECT FROM information_schema.tables"
-        "  WHERE table_schema = 'public' AND table_name = :t"
+        "  WHERE table_schema = :s AND table_name = :t"
         ")"
-    ), {"t": table})
+    ), {"s": schema, "t": table})
     return result.scalar()
 
 
-async def _column_exists(conn: AsyncConnection, table: str, column: str) -> bool:
+async def _column_exists(conn: AsyncConnection, table: str, column: str, schema: str = "public") -> bool:
     result = await conn.execute(text(
         "SELECT EXISTS ("
         "  SELECT FROM information_schema.columns"
-        "  WHERE table_schema = 'public'"
+        "  WHERE table_schema = :s"
         "  AND table_name = :t AND column_name = :c"
         ")"
-    ), {"t": table, "c": column})
+    ), {"s": schema, "t": table, "c": column})
     return result.scalar()
 
 
@@ -299,6 +299,178 @@ async def migration_012_add_org_id_call_logs(conn: AsyncConnection):
         logger.info("[Migration 012] call_logs.organization_id already exists — skipped")
 
 
+async def migration_013_setup_pipecat_schema(conn: AsyncConnection):
+    """
+    Create the pipecat PostgreSQL schema and migrate Pipecat-owned tables into it.
+
+    Strategy when connecting to the unified DB (shared with Node):
+    - public.assistants may be Node's WEB-shell table (no system_prompt) → create
+      pipecat.assistants fresh; copy rows only if public version is the Python one.
+    - public.plivo_numbers → rename to pipecat.voice_numbers (adds provider column).
+    - public.app_settings  → transform into pipecat.voice_provider_settings with
+      composite PK (organization_id, provider, key).
+    - public.call_logs     → move to pipecat.call_logs.
+    All cross-schema FK constraints are dropped to avoid inter-schema dependency.
+    """
+    await conn.execute(text("CREATE SCHEMA IF NOT EXISTS pipecat"))
+    logger.info("[Migration 013] pipecat schema ready")
+
+    # ── pipecat.assistants ────────────────────────────────────────────────────
+    if not await _table_exists(conn, "assistants", "pipecat"):
+        await conn.execute(text("""
+            CREATE TABLE pipecat.assistants (
+                id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                organization_id         VARCHAR(36),
+                name                    VARCHAR(255) NOT NULL DEFAULT '',
+                system_prompt           TEXT NOT NULL DEFAULT '',
+                welcome_message         VARCHAR(500) DEFAULT 'Hello. I am Ciya. How can I help you?',
+                default_language        VARCHAR(50)  DEFAULT 'english',
+                voice                   VARCHAR(50)  DEFAULT 'priya',
+                llm_model               VARCHAR(100) DEFAULT 'gpt-4o-mini',
+                temperature             FLOAT        DEFAULT 0.2,
+                business_hours_start    VARCHAR(10)  DEFAULT '10:30',
+                business_hours_end      VARCHAR(10)  DEFAULT '18:30',
+                prefetch_webhook_url    TEXT,
+                end_of_call_webhook_url TEXT,
+                status                  VARCHAR(20)  DEFAULT 'development',
+                created_at              TIMESTAMPTZ  DEFAULT NOW(),
+                updated_at              TIMESTAMPTZ  DEFAULT NOW()
+            )
+        """))
+        await conn.execute(text(
+            "CREATE INDEX idx_pipecat_assistants_org ON pipecat.assistants(organization_id)"
+        ))
+        # Copy rows from public.assistants only if it's the Python version (has system_prompt)
+        if await _column_exists(conn, "assistants", "system_prompt", "public"):
+            await conn.execute(text("""
+                INSERT INTO pipecat.assistants
+                    (id, organization_id, name, system_prompt, welcome_message,
+                     default_language, voice, llm_model, temperature,
+                     business_hours_start, business_hours_end,
+                     prefetch_webhook_url, end_of_call_webhook_url, status, created_at, updated_at)
+                SELECT id, organization_id, name, system_prompt, welcome_message,
+                       default_language, voice, llm_model, temperature,
+                       business_hours_start, business_hours_end,
+                       prefetch_webhook_url, end_of_call_webhook_url, status, created_at, updated_at
+                FROM public.assistants
+                ON CONFLICT (id) DO NOTHING
+            """))
+            logger.info("[Migration 013] Copied assistants from public to pipecat schema")
+        else:
+            logger.info("[Migration 013] public.assistants is Node's table — pipecat.assistants created empty")
+    else:
+        logger.info("[Migration 013] pipecat.assistants already exists — skipped")
+
+    # ── pipecat.voice_numbers (was public.plivo_numbers) ─────────────────────
+    if not await _table_exists(conn, "voice_numbers", "pipecat"):
+        if await _table_exists(conn, "plivo_numbers", "public"):
+            # Drop FK to public.assistants before moving
+            await conn.execute(text("""
+                ALTER TABLE public.plivo_numbers
+                DROP CONSTRAINT IF EXISTS plivo_numbers_assistant_id_fkey
+            """))
+            await conn.execute(text("ALTER TABLE public.plivo_numbers SET SCHEMA pipecat"))
+            await conn.execute(text("ALTER TABLE pipecat.plivo_numbers RENAME TO voice_numbers"))
+            if not await _column_exists(conn, "voice_numbers", "provider", "pipecat"):
+                await conn.execute(text(
+                    "ALTER TABLE pipecat.voice_numbers ADD COLUMN provider VARCHAR(20) NOT NULL DEFAULT 'plivo'"
+                ))
+            logger.info("[Migration 013] Moved plivo_numbers → pipecat.voice_numbers")
+        else:
+            await conn.execute(text("""
+                CREATE TABLE pipecat.voice_numbers (
+                    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    organization_id   VARCHAR(36),
+                    provider          VARCHAR(20) NOT NULL DEFAULT 'plivo',
+                    number            VARCHAR(30) UNIQUE NOT NULL,
+                    friendly_name     VARCHAR(255) DEFAULT '',
+                    country           VARCHAR(100) DEFAULT '',
+                    number_type       VARCHAR(50)  DEFAULT '',
+                    assistant_id      UUID,
+                    webhook_configured BOOLEAN DEFAULT FALSE
+                )
+            """))
+            await conn.execute(text(
+                "CREATE INDEX idx_pipecat_voice_numbers_org ON pipecat.voice_numbers(organization_id)"
+            ))
+            logger.info("[Migration 013] Created pipecat.voice_numbers (fresh)")
+    else:
+        logger.info("[Migration 013] pipecat.voice_numbers already exists — skipped")
+
+    # ── pipecat.voice_provider_settings (was public.app_settings) ────────────
+    if not await _table_exists(conn, "voice_provider_settings", "pipecat"):
+        await conn.execute(text("""
+            CREATE TABLE pipecat.voice_provider_settings (
+                organization_id VARCHAR(36)  NOT NULL,
+                provider        VARCHAR(20)  NOT NULL,
+                key             VARCHAR(100) NOT NULL,
+                value           TEXT,
+                PRIMARY KEY (organization_id, provider, key)
+            )
+        """))
+        logger.info("[Migration 013] Created pipecat.voice_provider_settings")
+
+        # Migrate data from old app_settings if it exists
+        if await _table_exists(conn, "app_settings", "public"):
+            key_map = {
+                "plivo_auth_id":    ("plivo",  "auth_id"),
+                "plivo_auth_token": ("plivo",  "auth_token"),
+                "domain":           ("system", "domain"),
+            }
+            for old_key, (provider, new_key) in key_map.items():
+                await conn.execute(text("""
+                    INSERT INTO pipecat.voice_provider_settings (organization_id, provider, key, value)
+                    SELECT '', :provider, :new_key, value
+                    FROM public.app_settings
+                    WHERE key = :old_key AND value IS NOT NULL
+                    ON CONFLICT DO NOTHING
+                """), {"provider": provider, "new_key": new_key, "old_key": old_key})
+            logger.info("[Migration 013] Migrated app_settings → voice_provider_settings")
+    else:
+        logger.info("[Migration 013] pipecat.voice_provider_settings already exists — skipped")
+
+    # ── pipecat.call_logs (was public.call_logs) ──────────────────────────────
+    if not await _table_exists(conn, "call_logs", "pipecat"):
+        if await _table_exists(conn, "call_logs", "public"):
+            await conn.execute(text("""
+                ALTER TABLE public.call_logs
+                DROP CONSTRAINT IF EXISTS call_logs_assistant_id_fkey
+            """))
+            await conn.execute(text("ALTER TABLE public.call_logs SET SCHEMA pipecat"))
+            logger.info("[Migration 013] Moved call_logs → pipecat.call_logs")
+        else:
+            await conn.execute(text("""
+                CREATE TABLE pipecat.call_logs (
+                    id              UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+                    organization_id VARCHAR(36),
+                    session_id      VARCHAR(255) NOT NULL,
+                    assistant_id    UUID,
+                    assistant_name  VARCHAR(255) DEFAULT '',
+                    from_number     VARCHAR(50)  DEFAULT '',
+                    to_number       VARCHAR(50)  DEFAULT '',
+                    duration        INTEGER      DEFAULT 0,
+                    chat            TEXT,
+                    call_status     VARCHAR(50)  DEFAULT 'user-ended',
+                    error_message   TEXT,
+                    chars_used      INTEGER      DEFAULT 0,
+                    recording_url   TEXT,
+                    cost_breakdown  TEXT,
+                    total_cost      DOUBLE PRECISION,
+                    started_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                    ended_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+                )
+            """))
+            await conn.execute(text(
+                "CREATE INDEX idx_pipecat_call_logs_session ON pipecat.call_logs(session_id)"
+            ))
+            await conn.execute(text(
+                "CREATE INDEX idx_pipecat_call_logs_org ON pipecat.call_logs(organization_id)"
+            ))
+            logger.info("[Migration 013] Created pipecat.call_logs (fresh)")
+    else:
+        logger.info("[Migration 013] pipecat.call_logs already exists — skipped")
+
+
 # ── Registry — add new migrations here in order ───────────────────────────────
 
 MIGRATIONS = [
@@ -314,6 +486,7 @@ MIGRATIONS = [
     ("010_add_org_id_assistants",       migration_010_add_org_id_assistants),
     ("011_add_org_id_plivo_numbers",    migration_011_add_org_id_plivo_numbers),
     ("012_add_org_id_call_logs",        migration_012_add_org_id_call_logs),
+    ("013_setup_pipecat_schema",        migration_013_setup_pipecat_schema),
 ]
 
 

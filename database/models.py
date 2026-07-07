@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import String, Text, Float, Boolean, ForeignKey, DateTime, Integer
+from sqlalchemy import String, Text, Float, Boolean, DateTime, Integer, PrimaryKeyConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -10,6 +10,7 @@ from database.connection import Base
 
 class Assistant(Base):
     __tablename__ = "assistants"
+    __table_args__ = {"schema": "pipecat"}
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -34,50 +35,65 @@ class Assistant(Base):
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
 
-    numbers: Mapped[list["PlivoNumber"]] = relationship(
-        "PlivoNumber", back_populates="assistant", lazy="select"
+    numbers: Mapped[list["VoiceNumber"]] = relationship(
+        "VoiceNumber",
+        foreign_keys="[VoiceNumber.assistant_id]",
+        back_populates="assistant",
+        lazy="select",
     )
 
 
-class PlivoNumber(Base):
-    __tablename__ = "plivo_numbers"
+class VoiceNumber(Base):
+    """Provider-agnostic phone number. provider field identifies the carrier (plivo, twilio, ...)."""
+    __tablename__ = "voice_numbers"
+    __table_args__ = {"schema": "pipecat"}
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    provider: Mapped[str] = mapped_column(String(20), nullable=False, default="plivo")
     number: Mapped[str] = mapped_column(String(30), unique=True, nullable=False)
     friendly_name: Mapped[str] = mapped_column(String(255), default="")
     country: Mapped[str] = mapped_column(String(100), default="")
     number_type: Mapped[str] = mapped_column(String(50), default="")
-    assistant_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("assistants.id", ondelete="SET NULL"), nullable=True
-    )
+    # Soft FK — no DB constraint to avoid cross-schema issues; references pipecat.assistants.id
+    assistant_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     webhook_configured: Mapped[bool] = mapped_column(Boolean, default=False)
 
     assistant: Mapped["Assistant | None"] = relationship(
-        "Assistant", back_populates="numbers"
+        "Assistant",
+        foreign_keys="[VoiceNumber.assistant_id]",
+        primaryjoin="VoiceNumber.assistant_id == Assistant.id",
+        back_populates="numbers",
     )
 
 
-class AppSetting(Base):
-    __tablename__ = "app_settings"
+class VoiceProviderSetting(Base):
+    """Per-org, per-provider key-value settings. organization_id='' for global defaults."""
+    __tablename__ = "voice_provider_settings"
+    __table_args__ = (
+        PrimaryKeyConstraint("organization_id", "provider", "key"),
+        {"schema": "pipecat"},
+    )
 
-    key: Mapped[str] = mapped_column(String(100), primary_key=True)
+    organization_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    provider: Mapped[str] = mapped_column(String(20), nullable=False)
+    key: Mapped[str] = mapped_column(String(100), nullable=False)
     value: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class CallLog(Base):
     __tablename__ = "call_logs"
+    __table_args__ = {"schema": "pipecat"}
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     session_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
-    assistant_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("assistants.id", ondelete="SET NULL"), nullable=True
-    )
+    # Soft FK — no DB constraint; references pipecat.assistants.id
+    assistant_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     assistant_name: Mapped[str] = mapped_column(String(255), default="")
     from_number: Mapped[str] = mapped_column(String(50), default="")
     to_number: Mapped[str] = mapped_column(String(50), default="")
