@@ -73,8 +73,10 @@ def _serialize(a: Assistant) -> dict:
 async def _get_or_404(db: AsyncSession, aid: str, org_id: str | None = None) -> Assistant:
     a = await db.get(Assistant, uuid.UUID(aid))
     if not a:
-        raise HTTPException(status_code=404, detail="Assistant not found")
-    if org_id and a.organization_id and a.organization_id != org_id:
+        raise HTTPException(status_code=404, detail="Not found")
+    if not org_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+    if a.organization_id and a.organization_id != org_id:
         raise HTTPException(status_code=403, detail="Access denied")
     return a
 
@@ -88,9 +90,13 @@ async def list_assistants(
     _: dict = Depends(get_current_user),
 ):
     org_id = get_org_id(request)
-    query = select(Assistant).order_by(Assistant.created_at.desc())
-    if org_id:
-        query = query.where(Assistant.organization_id == org_id)
+    if not org_id:
+        raise HTTPException(status_code=400, detail="X-Org-Id header required")
+    query = (
+        select(Assistant)
+        .where(Assistant.organization_id == org_id)
+        .order_by(Assistant.created_at.desc())
+    )
     result = await db.execute(query)
     return [_serialize(a) for a in result.scalars().all()]
 

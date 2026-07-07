@@ -6,7 +6,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-SECRET_KEY: str = os.getenv("SECRET_KEY") or "change-me-in-production"
+SECRET_KEY: str | None = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError("SECRET_KEY environment variable must be set")
 ALGORITHM = "HS256"
 INTERNAL_SECRET: str = os.getenv("ACTANGEL_INTERNAL_SECRET") or ""
 
