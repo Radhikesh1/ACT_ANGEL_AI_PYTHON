@@ -35,7 +35,7 @@ from utils.session_state import call_sessions
 from utils.tts_factory import create_tts
 from utils import call_log_manager
 from database.connection import AsyncSessionLocal
-from database.models import CallLog
+from database.models import CallLog, Assistant
 from services.recording_service import start_recording, fetch_and_upload
 from services.cost_service import calculate_cost, cost_to_json
 
@@ -82,6 +82,7 @@ async def _call_end_of_call_webhook(
     assistant_config: dict,
     call_status: str = "user-ended",
     error_message: str | None = None,
+    metadata: dict | None = None,
 ):
     """POST call summary to the end-of-call webhook."""
     duration = int(time.time() - start_ts)
@@ -111,7 +112,7 @@ async def _call_end_of_call_webhook(
             "to": to_number,
         },
         "recording": {"recording_url": None},
-        "metadata": {},
+        "metadata": metadata or {},
         "call_status": call_status,
         "error_message": error_message,
         "cost_breakdown": [],
@@ -144,9 +145,22 @@ async def _finalize_call(
     ended_at: datetime,
     end_of_call_url: str | None,
     llm_model: str,
+    metadata: dict | None = None,
 ):
     """Detached task: update (or insert) call log, fire webhooks, then save recording URL.
     Runs independently of the websocket handler so CancelledError cannot abort it."""
+
+    # Resolve missing organization_id from the assistant record so the Node
+    # ingest always fires even when the session cache had a gap.
+    if not organization_id and agent_id:
+        try:
+            async with AsyncSessionLocal() as db:
+                asst = await db.get(Assistant, uuid.UUID(agent_id))
+                if asst and asst.organization_id:
+                    organization_id = asst.organization_id
+                    logger.info(f"[ActAngel Ingest] Resolved organization_id={organization_id} from assistant")
+        except Exception as e:
+            logger.warning(f"[ActAngel Ingest] Could not resolve organization_id: {e}")
 
     # 1. Update the in-progress log row that was created at call start.
     #    Fall back to INSERT if the initial creation failed (log_id is None).
@@ -216,6 +230,7 @@ async def _finalize_call(
                 assistant_config=assistant_config,
                 call_status=call_status,
                 error_message=error_message,
+                metadata=metadata,
             )
         except Exception as wh_err:
             logger.warning(f"[EndOfCall] Webhook error: {wh_err}")
@@ -246,6 +261,8 @@ async def _finalize_call(
     # 4. Fire actAngel ingest webhook → WEB Node stores call in its DB
     ingest_url = os.getenv("ACTANGEL_INGEST_URL")
     ingest_secret = os.getenv("ACTANGEL_INGEST_SECRET")
+    if ingest_url and not organization_id:
+        logger.warning("[ActAngel Ingest] Skipping — organization_id could not be resolved")
     if ingest_url and organization_id:
         try:
             cost_obj: dict = json.loads(cost_to_json(calculate_cost(final_duration, chat_messages, llm_model)))
@@ -271,7 +288,7 @@ async def _finalize_call(
                 "cost_breakdown": raw_cost,
                 "call_status": call_status,
                 "error_message": error_message,
-                "metadata": {},
+                "metadata": metadata or {},
             }
             headers: dict = {"Content-Type": "application/json"}
             if ingest_secret:
@@ -369,6 +386,7 @@ async def run_bot(websocket_client):
     # Prefetch webhook (optional)
     # -----------------------------------
 
+    customer_metadata: dict = {}
     if prefetch_url:
         prefetch_data = await _call_prefetch_webhook(
             url=prefetch_url,
@@ -381,6 +399,21 @@ async def run_bot(websocket_client):
         extra_context = prefetch_data.get("context") or prefetch_data.get("extra_context") or ""
         if extra_context:
             system_prompt = f"{system_prompt}\n\n--- Customer Context ---\n{extra_context}"
+
+        # Extract customer identity fields for Node's ingest (contact linking)
+        _name_keys  = ("name", "customer_name", "full_name")
+        _email_keys = ("email", "customer_email")
+        for k in _name_keys:
+            if prefetch_data.get(k):
+                customer_metadata["name"] = prefetch_data[k]
+                break
+        for k in _email_keys:
+            if prefetch_data.get(k):
+                customer_metadata["email"] = prefetch_data[k]
+                break
+        for k in ("phone", "company"):
+            if prefetch_data.get(k):
+                customer_metadata[k] = prefetch_data[k]
 
     # -----------------------------------
     # Serializer
@@ -550,4 +583,5 @@ async def run_bot(websocket_client):
             ended_at=ended_at,
             end_of_call_url=end_of_call_url,
             llm_model=llm_model,
+            metadata=customer_metadata,
         ))

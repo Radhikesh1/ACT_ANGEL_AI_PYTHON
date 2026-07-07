@@ -112,7 +112,7 @@ async def migration_002_create_plivo_numbers(conn: AsyncConnection):
             id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             number            VARCHAR(30)  UNIQUE NOT NULL,
             friendly_name     VARCHAR(255) DEFAULT '',
-            assistant_id      UUID         REFERENCES assistants(id) ON DELETE SET NULL,
+            assistant_id      UUID,
             webhook_configured BOOLEAN     DEFAULT FALSE
         )
     """))
@@ -161,7 +161,7 @@ async def migration_005_create_call_logs(conn: AsyncConnection):
         CREATE TABLE call_logs (
             id             UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
             session_id     VARCHAR(255) NOT NULL,
-            assistant_id   UUID         REFERENCES assistants(id) ON DELETE SET NULL,
+            assistant_id   UUID,
             assistant_name VARCHAR(255) DEFAULT '',
             from_number    VARCHAR(50)  DEFAULT '',
             to_number      VARCHAR(50)  DEFAULT '',
