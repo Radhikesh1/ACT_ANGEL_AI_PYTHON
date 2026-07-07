@@ -37,10 +37,11 @@ class Assistant(Base):
 
     numbers: Mapped[list["VoiceNumber"]] = relationship(
         "VoiceNumber",
-        foreign_keys="[VoiceNumber.assistant_id]",
+        primaryjoin="Assistant.id == foreign(VoiceNumber.assistant_id)",
         back_populates="assistant",
         lazy="select",
     )
+
 
 
 class VoiceNumber(Base):
@@ -63,10 +64,11 @@ class VoiceNumber(Base):
 
     assistant: Mapped["Assistant | None"] = relationship(
         "Assistant",
-        foreign_keys="[VoiceNumber.assistant_id]",
-        primaryjoin="VoiceNumber.assistant_id == Assistant.id",
+        primaryjoin="foreign(VoiceNumber.assistant_id) == Assistant.id",
         back_populates="numbers",
+        lazy="select",
     )
+
 
 
 class VoiceProviderSetting(Base):
