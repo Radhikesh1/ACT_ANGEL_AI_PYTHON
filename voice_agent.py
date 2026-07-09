@@ -150,8 +150,7 @@ async def _finalize_call(
     """Detached task: update (or insert) call log, fire webhooks, then save recording URL.
     Runs independently of the websocket handler so CancelledError cannot abort it."""
 
-    # Resolve missing organization_id from the assistant record so the Node
-    # ingest always fires even when the session cache had a gap.
+    # Resolve missing organization_id — try assistant record first, then VoiceNumber.
     if not organization_id and agent_id:
         try:
             async with AsyncSessionLocal() as db:
@@ -160,7 +159,23 @@ async def _finalize_call(
                     organization_id = asst.organization_id
                     logger.info(f"[ActAngel Ingest] Resolved organization_id={organization_id} from assistant")
         except Exception as e:
-            logger.warning(f"[ActAngel Ingest] Could not resolve organization_id: {e}")
+            logger.warning(f"[ActAngel Ingest] Could not resolve organization_id from assistant: {e}")
+
+    if not organization_id and to_number:
+        try:
+            from sqlalchemy import or_ as _or
+            to_variants = [to_number, "+" + to_number.lstrip("+")]
+            async with AsyncSessionLocal() as db:
+                from sqlalchemy import select as _select
+                result = await db.execute(
+                    _select(VoiceNumber).where(VoiceNumber.number.in_(to_variants))
+                )
+                vn = result.scalar_one_or_none()
+                if vn and vn.organization_id:
+                    organization_id = vn.organization_id
+                    logger.info(f"[ActAngel Ingest] Resolved organization_id={organization_id} from VoiceNumber {to_number}")
+        except Exception as e:
+            logger.warning(f"[ActAngel Ingest] Could not resolve organization_id from VoiceNumber: {e}")
 
     # 1. Update the in-progress log row that was created at call start.
     #    Fall back to INSERT if the initial creation failed (log_id is None).
@@ -275,6 +290,7 @@ async def _finalize_call(
             }
             payload = {
                 "agent_id": str(agent_id),
+                "assistant_name": assistant_config.get("name") or "",
                 "session_id": call_id,
                 "organization_id": organization_id,
                 "ts": start_ts,
@@ -294,6 +310,7 @@ async def _finalize_call(
             headers: dict = {"Content-Type": "application/json"}
             if ingest_secret:
                 headers["X-Internal-Secret"] = ingest_secret
+            logger.info(f"[ActAngel Ingest] Sending → agent_id={agent_id} org={organization_id} session={call_id}")
             async with httpx.AsyncClient(timeout=15) as client:
                 resp = await client.post(ingest_url, json=payload, headers=headers)
                 logger.info(f"[ActAngel Ingest] {ingest_url} → {resp.status_code}")

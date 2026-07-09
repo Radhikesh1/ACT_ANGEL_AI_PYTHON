@@ -5,7 +5,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from loguru import logger
-from sqlalchemy import select
+from sqlalchemy import select, or_
 
 from database.connection import get_db
 from database.models import VoiceNumber, Assistant
@@ -68,12 +68,20 @@ async def get_answer_xml(request: Request):
     from_number = params.get("From", "")
     to_number = params.get("To", "")      # the Plivo number that was called
 
+    # Plivo sends numbers without '+'; DB may store them with or without it.
+    # Try both variants so the lookup succeeds regardless of how numbers were saved.
+    to_number_variants = [to_number]
+    if to_number.startswith("+"):
+        to_number_variants.append(to_number[1:])
+    else:
+        to_number_variants.append("+" + to_number)
+
     # Look up which assistant owns this number
     assistant_config: dict | None = None
 
     async for db in get_db():
         result = await db.execute(
-            select(VoiceNumber).where(VoiceNumber.number == to_number)
+            select(VoiceNumber).where(VoiceNumber.number.in_(to_number_variants))
         )
         plivo_rec = result.scalar_one_or_none()
 
@@ -95,16 +103,19 @@ async def get_answer_xml(request: Request):
                     "end_of_call_webhook_url": asst.end_of_call_webhook_url,
                 }
 
+    resolved_org_id = str(asst.organization_id) if assistant_config and asst.organization_id else None
+
     call_sessions[call_uuid] = {
         "from_number": from_number,
         "to_number": to_number,
         "assistant_config": assistant_config,
-        "organization_id": str(asst.organization_id) if assistant_config and asst.organization_id else None,
+        "organization_id": resolved_org_id,
     }
 
     logger.info(
-        f"Inbound call {call_uuid} from {from_number} → "
-        f"assistant: {assistant_config['name'] if assistant_config else 'default'}"
+        f"Inbound call {call_uuid} from {from_number} → {to_number} | "
+        f"assistant: {assistant_config['name'] if assistant_config else 'DEFAULT (no number match)'} | "
+        f"org: {resolved_org_id or 'UNRESOLVED'}"
     )
 
     domain = os.getenv("DOMAIN", "localhost:8000")
