@@ -259,7 +259,8 @@ async def _finalize_call(
             logger.error(f"[CallLog] Recording update failed for {log_id}: {rec_err}")
 
     # 4. Fire actAngel ingest webhook → WEB Node stores call in its DB
-    ingest_url = os.getenv("ACTANGEL_INGEST_URL")
+    ingest_base = os.getenv("ACTANGEL_INGEST_URL", "").rstrip("/")
+    ingest_url = f"{ingest_base}/api/webhook/call-session-actangel" if ingest_base else None
     ingest_secret = os.getenv("ACTANGEL_INGEST_SECRET")
     if ingest_url and not organization_id:
         logger.warning("[ActAngel Ingest] Skipping — organization_id could not be resolved")
@@ -296,6 +297,8 @@ async def _finalize_call(
             async with httpx.AsyncClient(timeout=15) as client:
                 resp = await client.post(ingest_url, json=payload, headers=headers)
                 logger.info(f"[ActAngel Ingest] {ingest_url} → {resp.status_code}")
+                if resp.status_code not in (200, 201):
+                    logger.warning(f"[ActAngel Ingest] Unexpected response: {resp.text[:500]}")
         except Exception as ingest_err:
             logger.warning(f"[ActAngel Ingest] Webhook failed: {ingest_err}")
 
