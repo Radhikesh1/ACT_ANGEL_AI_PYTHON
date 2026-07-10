@@ -30,7 +30,6 @@ class FillerProcessor(FrameProcessor):
 
                 filler_text = "Just thinking"
 
-            print(f"[FillerProcessor] Sending filler: {filler_text}")
 
             await self.push_frame(
                 TextFrame(filler_text),

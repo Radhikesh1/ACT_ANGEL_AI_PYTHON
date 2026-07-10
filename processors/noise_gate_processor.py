@@ -34,16 +34,13 @@ class NoiseFilterProcessor(FrameProcessor):
 
         text = frame.text.strip().lower()
 
-        print(f"[NoiseFilter] Received: {text}")
 
         # Ignore very short fragments
         if len(text) < MINIMUM_LENGTH:
-            print(f"[NoiseFilter] Dropped short text: {text}")
             return
 
         # Ignore filler sounds
         if text in IGNORE_TEXTS:
-            print(f"[NoiseFilter] Dropped filler: {text}")
             return
 
         # Pass valid speech

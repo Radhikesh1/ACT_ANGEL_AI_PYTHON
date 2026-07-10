@@ -25,11 +25,8 @@ app = FastAPI(title="ACT Angel AI API")
 # CORS  (allow the frontend origin in dev + prod)
 # --------------------------------------------------
 
-ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "https://actangels.com",
-    "https://www.actangels.com",
-]
+_origins_env = os.getenv("ALLOWED_ORIGINS", "https://actangels.com,https://www.actangels.com")
+ALLOWED_ORIGINS = [o.strip() for o in _origins_env.split(",") if o.strip()]
 
 app.add_middleware(
     CORSMiddleware,

@@ -46,7 +46,7 @@ async def login(body: LoginRequest, response: Response):
         httponly=True,
         max_age=ACCESS_TOKEN_EXPIRE_HOURS * 3600,
         samesite="lax",
-        secure=False,  # set True when serving over HTTPS in production
+        secure=os.getenv("SECURE_COOKIES", "false").lower() == "true",
     )
 
     return {"userId": ADMIN_USERID, "role": "SAD", "displayName": "Admin"}

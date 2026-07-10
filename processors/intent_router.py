@@ -19,7 +19,6 @@ class IntentRouterProcessor(FrameProcessor):
 
             text = frame.text.lower()
 
-            print(f"[IntentRouter] User said: {text}")
 
             # Example trigger
             if "appointment" in text:
