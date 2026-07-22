@@ -48,25 +48,25 @@ async def list_call_logs(
     _: dict = Depends(get_current_user),
 ):
     org_id = get_org_id(request)
-    query = select(CallLog).order_by(desc(CallLog.started_at)).limit(200)
-    if org_id:
-        query = select(CallLog).where(CallLog.organization_id == org_id).order_by(desc(CallLog.started_at)).limit(200)
+    if not org_id:
+        raise HTTPException(status_code=400, detail="X-Org-Id header is required")
+    query = select(CallLog).where(CallLog.organization_id == org_id).order_by(desc(CallLog.started_at)).limit(200)
     result = await db.execute(query)
     return [_serialize(c) for c in result.scalars().all()]
 
 
 @router.get("/call-logs/{log_id}")
 async def get_call_log(
-    log_id: str,
+    log_id: uuid.UUID,
     request: Request,
     db: AsyncSession = Depends(get_db),
     _: dict = Depends(get_current_user),
 ):
     org_id = get_org_id(request)
-    c = await db.get(CallLog, uuid.UUID(log_id))
+    c = await db.get(CallLog, log_id)
     if not c:
         raise HTTPException(status_code=404, detail="Call log not found")
-    if org_id and c.organization_id and c.organization_id != org_id:
+    if c.organization_id != org_id:
         raise HTTPException(status_code=403, detail="Access denied")
     return _serialize(c)
 
@@ -77,16 +77,20 @@ class DurationPatch(BaseModel):
 
 @router.patch("/call-logs/{log_id}/duration")
 async def patch_call_log_duration(
-    log_id: str,
+    log_id: uuid.UUID,
+    request: Request,
     body: DurationPatch,
     db: AsyncSession = Depends(get_db),
     _: dict = Depends(get_current_user),
 ):
     if body.duration <= 0:
         raise HTTPException(status_code=422, detail="duration must be > 0")
-    c = await db.get(CallLog, uuid.UUID(log_id))
+    org_id = get_org_id(request)
+    c = await db.get(CallLog, log_id)
     if not c:
         raise HTTPException(status_code=404, detail="Call log not found")
+    if c.organization_id != org_id:
+        raise HTTPException(status_code=403, detail="Access denied")
     c.duration = body.duration
     await db.commit()
-    return {"id": log_id, "duration": body.duration}
+    return {"id": str(log_id), "duration": body.duration}

@@ -1,11 +1,12 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from loguru import logger
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, HttpUrl
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Optional
 
 from api.dependencies import get_current_user, get_org_id
 from database.connection import get_db
@@ -20,17 +21,17 @@ PRODUCTION = "production"
 # ── Schemas ───────────────────────────────────────────────────────────────────
 
 class AssistantIn(BaseModel):
-    name: str
+    name: str = Field(..., min_length=1, max_length=200)
     system_prompt: str
     welcome_message: str = "Hello. I am Ciya. How can I help you?"
     default_language: str = "english"
     voice: str = "priya"
     llm_model: str = "gpt-4o-mini"
-    temperature: float = 0.2
+    temperature: float = Field(0.2, ge=0.0, le=2.0)
     business_hours_start: str = "10:30"
     business_hours_end: str = "18:30"
-    prefetch_webhook_url: str | None = None
-    end_of_call_webhook_url: str | None = None
+    prefetch_webhook_url: Optional[HttpUrl] = None
+    end_of_call_webhook_url: Optional[HttpUrl] = None
 
 
 class AssistantUpdate(BaseModel):
@@ -70,13 +71,13 @@ def _serialize(a: Assistant) -> dict:
     }
 
 
-async def _get_or_404(db: AsyncSession, aid: str, org_id: str | None = None) -> Assistant:
-    a = await db.get(Assistant, uuid.UUID(aid))
+async def _get_or_404(db: AsyncSession, aid: uuid.UUID, org_id: str | None = None) -> Assistant:
+    a = await db.get(Assistant, aid)
     if not a:
         raise HTTPException(status_code=404, detail="Not found")
     if not org_id:
         raise HTTPException(status_code=403, detail="Access denied")
-    if a.organization_id and a.organization_id != org_id:
+    if a.organization_id != org_id:
         raise HTTPException(status_code=403, detail="Access denied")
     return a
 
@@ -109,14 +110,15 @@ async def create_assistant(
     _: dict = Depends(get_current_user),
 ):
     org_id = get_org_id(request)
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
+    body_data = body.model_dump(mode="json")
     a = Assistant(
         id=uuid.uuid4(),
         organization_id=org_id,
         status=DEVELOPMENT,
         created_at=now,
         updated_at=now,
-        **body.model_dump(),
+        **body_data,
     )
     db.add(a)
     await db.commit()
@@ -127,7 +129,7 @@ async def create_assistant(
 
 @router.get("/assistants/{aid}")
 async def get_assistant(
-    aid: str,
+    aid: uuid.UUID,
     request: Request,
     db: AsyncSession = Depends(get_db),
     _: dict = Depends(get_current_user),
@@ -138,7 +140,7 @@ async def get_assistant(
 
 @router.put("/assistants/{aid}")
 async def update_assistant(
-    aid: str,
+    aid: uuid.UUID,
     request: Request,
     body: AssistantUpdate,
     db: AsyncSession = Depends(get_db),
@@ -156,7 +158,7 @@ async def update_assistant(
     for key, value in body.model_dump(exclude_none=True).items():
         setattr(a, key, value)
 
-    a.updated_at = datetime.utcnow()
+    a.updated_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(a)
     logger.info(f"[Assistant] Updated: id={a.id} name='{a.name}'")
@@ -165,7 +167,7 @@ async def update_assistant(
 
 @router.delete("/assistants/{aid}", status_code=204)
 async def delete_assistant(
-    aid: str,
+    aid: uuid.UUID,
     request: Request,
     db: AsyncSession = Depends(get_db),
     _: dict = Depends(get_current_user),
@@ -186,7 +188,7 @@ async def delete_assistant(
 
 @router.post("/assistants/{aid}/publish")
 async def publish_assistant(
-    aid: str,
+    aid: uuid.UUID,
     request: Request,
     db: AsyncSession = Depends(get_db),
     _: dict = Depends(get_current_user),
@@ -194,7 +196,7 @@ async def publish_assistant(
     org_id = get_org_id(request)
     a = await _get_or_404(db, aid, org_id)
     a.status = PRODUCTION
-    a.updated_at = datetime.utcnow()
+    a.updated_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(a)
     logger.info(f"[Assistant] Published to PRODUCTION: id={a.id} name='{a.name}'")
@@ -203,7 +205,7 @@ async def publish_assistant(
 
 @router.post("/assistants/{aid}/unpublish")
 async def unpublish_assistant(
-    aid: str,
+    aid: uuid.UUID,
     request: Request,
     db: AsyncSession = Depends(get_db),
     _: dict = Depends(get_current_user),
@@ -211,7 +213,7 @@ async def unpublish_assistant(
     org_id = get_org_id(request)
     a = await _get_or_404(db, aid, org_id)
     a.status = DEVELOPMENT
-    a.updated_at = datetime.utcnow()
+    a.updated_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(a)
     logger.info(f"[Assistant] Moved to DEVELOPMENT: id={a.id} name='{a.name}'")

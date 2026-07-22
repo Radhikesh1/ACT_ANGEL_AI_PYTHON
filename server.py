@@ -19,6 +19,17 @@ from api.call_logs import router as call_logs_router
 
 load_dotenv()
 
+
+def mask_phone(phone: str) -> str:
+    """Mask phone number for logging, keeping only last 4 digits."""
+    if not phone:
+        return ""
+    digits = ''.join(c for c in phone if c.isdigit())
+    if len(digits) <= 4:
+        return "*" * len(digits)
+    return "*" * (len(digits) - 4) + digits[-4:]
+
+
 app = FastAPI(title="ACT Angel AI API")
 
 # --------------------------------------------------
@@ -32,8 +43,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-Org-Id", "Cookie"],
 )
 
 # --------------------------------------------------
@@ -110,7 +121,7 @@ async def get_answer_xml(request: Request):
     }
 
     logger.info(
-        f"Inbound call {call_uuid} from {from_number} → {to_number} | "
+        f"Inbound call {call_uuid} from {mask_phone(from_number)} → {mask_phone(to_number)} | "
         f"assistant: {assistant_config['name'] if assistant_config else 'DEFAULT (no number match)'} | "
         f"org: {resolved_org_id or 'UNRESOLVED'}"
     )

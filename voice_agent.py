@@ -41,6 +41,17 @@ from services.cost_service import calculate_cost, cost_to_json
 
 load_dotenv()
 
+
+def mask_phone(phone: str) -> str:
+    """Mask phone number for logging, keeping only last 4 digits."""
+    if not phone:
+        return ""
+    digits = ''.join(c for c in phone if c.isdigit())
+    if len(digits) <= 4:
+        return "*" * len(digits)
+    return "*" * (len(digits) - 4) + digits[-4:]
+
+
 OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY") or ""
 SARVAM_API_KEY: str = os.getenv("SARVAM_API_KEY") or ""
 
@@ -173,7 +184,7 @@ async def _finalize_call(
                 vn = result.scalar_one_or_none()
                 if vn and vn.organization_id:
                     organization_id = vn.organization_id
-                    logger.info(f"[ActAngel Ingest] Resolved organization_id={organization_id} from VoiceNumber {to_number}")
+                    logger.info(f"[ActAngel Ingest] Resolved organization_id={organization_id} from VoiceNumber {mask_phone(to_number)}")
         except Exception as e:
             logger.warning(f"[ActAngel Ingest] Could not resolve organization_id from VoiceNumber: {e}")
 
@@ -356,7 +367,7 @@ async def run_bot(websocket_client):
 
     clog.info(
         f"Call connected | call_id={call_id} | "
-        f"from={customer_number} | to={to_number} | "
+        f"from={mask_phone(customer_number)} | to={mask_phone(to_number)} | "
         f"assistant={assistant_config.get('name', 'default')} | "
         f"model={llm_model}"
     )

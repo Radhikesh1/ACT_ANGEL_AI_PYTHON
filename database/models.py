@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import String, Text, Float, Boolean, DateTime, Integer, PrimaryKeyConstraint
 from sqlalchemy.dialects.postgresql import UUID
@@ -30,9 +30,9 @@ class Assistant(Base):
     prefetch_webhook_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     end_of_call_webhook_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="development")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
     )
 
     numbers: Mapped[list["VoiceNumber"]] = relationship(

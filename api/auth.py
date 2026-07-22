@@ -1,5 +1,5 @@
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from jose import jwt
@@ -14,7 +14,7 @@ router = APIRouter()
 
 ADMIN_USERID: str = os.getenv("ADMIN_USERID") or ""
 ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD") or ""
-ACCESS_TOKEN_EXPIRE_HOURS = 24 * 7  # 1 week
+ACCESS_TOKEN_EXPIRE_HOURS = 1  # 1 hour; use refresh tokens for longer sessions
 
 if not ADMIN_USERID:
     raise ValueError("ADMIN_USERID missing — add it to .env")
@@ -29,7 +29,7 @@ class LoginRequest(BaseModel):
 
 
 def _create_token(user_id: str) -> str:
-    expire = datetime.utcnow() + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
+    expire = datetime.now(timezone.utc) + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
     return jwt.encode({"sub": user_id, "exp": expire}, SECRET_KEY, algorithm=ALGORITHM)
 
 
@@ -46,7 +46,7 @@ async def login(body: LoginRequest, response: Response):
         httponly=True,
         max_age=ACCESS_TOKEN_EXPIRE_HOURS * 3600,
         samesite="lax",
-        secure=os.getenv("SECURE_COOKIES", "false").lower() == "true",
+        secure=os.getenv("SECURE_COOKIES", "true").lower() == "true",
     )
 
     return {"userId": ADMIN_USERID, "role": "SAD", "displayName": "Admin"}
