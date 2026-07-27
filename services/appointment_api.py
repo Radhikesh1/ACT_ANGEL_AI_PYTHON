@@ -62,6 +62,6 @@ async def create_appointment_api(
 
         result = response.json()
 
-        logger.info(f"Appointment API response: {result}")
+        logger.info(f"Appointment API response: status={result.get('status')} id={result.get('id')}")
 
         return result

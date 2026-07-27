@@ -471,6 +471,18 @@ async def migration_013_setup_pipecat_schema(conn: AsyncConnection):
         logger.info("[Migration 013] pipecat.call_logs already exists — skipped")
 
 
+async def migration_014_add_dynamic_config(conn: AsyncConnection):
+    """Add faq_items, intent_triggers, filler_messages JSONB columns to pipecat.assistants."""
+    for col in ("faq_items", "intent_triggers", "filler_messages"):
+        if not await _column_exists(conn, "assistants", col, "pipecat"):
+            await conn.execute(text(
+                f"ALTER TABLE pipecat.assistants ADD COLUMN {col} JSONB"
+            ))
+            logger.info(f"[Migration 014] Added column {col} to pipecat.assistants")
+        else:
+            logger.info(f"[Migration 014] Column {col} already exists — skipped")
+
+
 # ── Registry — add new migrations here in order ───────────────────────────────
 
 MIGRATIONS = [
@@ -487,6 +499,7 @@ MIGRATIONS = [
     ("011_add_org_id_plivo_numbers",    migration_011_add_org_id_plivo_numbers),
     ("012_add_org_id_call_logs",        migration_012_add_org_id_call_logs),
     ("013_setup_pipecat_schema",        migration_013_setup_pipecat_schema),
+    ("014_add_dynamic_config",          migration_014_add_dynamic_config),
 ]
 
 

@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import String, Text, Float, Boolean, DateTime, Integer, PrimaryKeyConstraint
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database.connection import Base
@@ -19,7 +19,7 @@ class Assistant(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     system_prompt: Mapped[str] = mapped_column(Text, nullable=False)
     welcome_message: Mapped[str] = mapped_column(
-        String(500), default="Hello. I am Ciya. How can I help you?"
+        String(500), default="Hello. How can I help you?"
     )
     default_language: Mapped[str] = mapped_column(String(50), default="english")
     voice: Mapped[str] = mapped_column(String(50), default="priya")
@@ -29,6 +29,9 @@ class Assistant(Base):
     business_hours_end: Mapped[str] = mapped_column(String(10), default="18:30")
     prefetch_webhook_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     end_of_call_webhook_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    faq_items: Mapped[list | None] = mapped_column(JSONB, nullable=True, default=None)
+    intent_triggers: Mapped[list | None] = mapped_column(JSONB, nullable=True, default=None)
+    filler_messages: Mapped[dict | None] = mapped_column(JSONB, nullable=True, default=None)
     status: Mapped[str] = mapped_column(String(20), default="development")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(

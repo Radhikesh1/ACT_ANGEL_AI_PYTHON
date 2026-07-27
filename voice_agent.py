@@ -30,7 +30,6 @@ from processors.appointment_processor import AppointmentProcessor
 from processors.intent_router import IntentRouterProcessor
 from processors.noise_gate_processor import NoiseFilterProcessor
 
-from system_prompt import SYSTEM_PROMPT
 from utils.session_state import call_sessions
 from utils.tts_factory import create_tts
 from utils import call_log_manager
@@ -348,11 +347,13 @@ async def run_bot(websocket_client):
     assistant_config: dict = session.get("assistant_config") or {}
     organization_id: str | None = session.get("organization_id")
 
-    # Resolve config — fall back to defaults if no assistant is assigned
-    system_prompt: str = assistant_config.get("system_prompt") or SYSTEM_PROMPT
+    system_prompt: str | None = assistant_config.get("system_prompt")
+    if not system_prompt:
+        logger.error(f"[{call_id}] No system_prompt configured for this assistant — call aborted")
+        return
     welcome_message: str = (
         assistant_config.get("welcome_message")
-        or "Hello. I am Ciya. How can I help you?"
+        or "Hello. How can I help you?"
     )
     llm_model: str = assistant_config.get("llm_model") or "gpt-4o-mini"
     temperature: float = float(assistant_config.get("temperature") or 0.2)
@@ -361,6 +362,18 @@ async def run_bot(websocket_client):
     agent_id: str = assistant_config.get("id") or ""
     prefetch_url: str | None = assistant_config.get("prefetch_webhook_url") or None
     end_of_call_url: str | None = assistant_config.get("end_of_call_webhook_url") or None
+    faq_items: list = assistant_config.get("faq_items") or []
+    intent_triggers_config: list | None = assistant_config.get("intent_triggers")
+    filler_messages_config: dict = assistant_config.get("filler_messages") or {}
+
+    # Inject FAQ pairs into system prompt so the LLM handles them naturally
+    if faq_items:
+        faq_block = "\n\n--- Frequently Asked Questions ---\n" + "\n".join(
+            f"Q: {item.get('question', '')}\nA: {item.get('answer', '')}"
+            for item in faq_items
+            if item.get("question") and item.get("answer")
+        )
+        system_prompt = system_prompt + faq_block
 
     # Start per-call log file: logs/calls/{call_id}.log
     clog = call_log_manager.start(call_id)
@@ -519,11 +532,15 @@ async def run_bot(websocket_client):
         default_language=default_language,
     )
 
-    filler_processor = FillerProcessor(call_id=call_id)
+    filler_processor = FillerProcessor(
+        call_id=call_id,
+        filler_messages=filler_messages_config,
+    )
 
     intent_router = IntentRouterProcessor(
         call_id=call_id,
         filler_processor=filler_processor,
+        intent_triggers=intent_triggers_config,
     )
 
     appointment_processor = AppointmentProcessor(

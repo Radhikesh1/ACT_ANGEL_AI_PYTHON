@@ -10,7 +10,7 @@ from sqlalchemy import select, or_
 from database.connection import get_db
 from database.models import VoiceNumber, Assistant
 from migrations.runner import run_migrations
-from utils.session_state import call_sessions
+from utils.session_state import call_sessions, _redis_client, _REDIS_URL
 from voice_agent import run_bot
 
 from api.auth import router as auth_router
@@ -36,8 +36,14 @@ app = FastAPI(title="ACT Angel AI API")
 # CORS  (allow the frontend origin in dev + prod)
 # --------------------------------------------------
 
-_origins_env = os.getenv("ALLOWED_ORIGINS", "https://actangels.com,https://www.actangels.com")
+_origins_env = os.getenv("ALLOWED_ORIGINS")
+if not _origins_env:
+    raise ValueError("ALLOWED_ORIGINS missing — add it to .env")
 ALLOWED_ORIGINS = [o.strip() for o in _origins_env.split(",") if o.strip()]
+
+DOMAIN: str = os.getenv("DOMAIN") or ""
+if not DOMAIN:
+    raise ValueError("DOMAIN missing — add it to .env")
 
 app.add_middleware(
     CORSMiddleware,
@@ -55,6 +61,25 @@ app.add_middleware(
 async def startup():
     await run_migrations()
     logger.info("Migrations complete — server ready")
+
+    # --------------------------------------------------
+    # Redis health check (non-fatal)
+    # --------------------------------------------------
+    if _redis_client is None:
+        logger.warning(
+            f"[Redis] Not connected to {_REDIS_URL}. "
+            "Active call sessions will not survive server restarts. "
+            "Set REDIS_URL and ensure Redis is running for production."
+        )
+    else:
+        try:
+            _redis_client.ping()
+            logger.info(f"[Redis] Healthy at {_REDIS_URL}")
+        except Exception as exc:
+            logger.warning(
+                f"[Redis] Ping failed at startup ({exc}). "
+                "Session persistence is degraded — falling back to in-memory storage."
+            )
 
 # --------------------------------------------------
 # API Routers
@@ -109,6 +134,9 @@ async def get_answer_xml(request: Request):
                     "business_hours_end": asst.business_hours_end,
                     "prefetch_webhook_url": asst.prefetch_webhook_url,
                     "end_of_call_webhook_url": asst.end_of_call_webhook_url,
+                    "faq_items": asst.faq_items or [],
+                    "intent_triggers": asst.intent_triggers or [],
+                    "filler_messages": asst.filler_messages or {},
                 }
 
     resolved_org_id = str(asst.organization_id) if assistant_config and asst.organization_id else None
@@ -125,8 +153,6 @@ async def get_answer_xml(request: Request):
         f"assistant: {assistant_config['name'] if assistant_config else 'DEFAULT (no number match)'} | "
         f"org: {resolved_org_id or 'UNRESOLVED'}"
     )
-
-    domain = os.getenv("DOMAIN", "localhost:8000")
 
     xml_content = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>

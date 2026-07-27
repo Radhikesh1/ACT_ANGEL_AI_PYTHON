@@ -46,7 +46,6 @@ Each inbound call is routed to the assistant assigned to that Plivo number. The 
 ACT_ANGEL_AI_PYTHON/
 ├── server.py                    # FastAPI app — all routes, CORS, startup
 ├── voice_agent.py               # Voice pipeline orchestrator (builds & runs Pipecat pipeline per call)
-├── system_prompt.py             # Default fallback system prompt
 ├── requirements.txt
 ├── .env                         # API keys & config (see below — gitignored)
 ├── docker-compose.dev.yml       # Local PostgreSQL container for development

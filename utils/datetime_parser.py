@@ -21,6 +21,6 @@ def parse_datetime(text):
 
     except Exception as e:
 
-        logger.error(f"DateTime parsing failed for '{text}': {e}")
+        logger.error(f"DateTime parsing failed (len={len(text)}): {e}")
 
         return None

@@ -16,6 +16,12 @@ ADMIN_USERID: str = os.getenv("ADMIN_USERID") or ""
 ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD") or ""
 ACCESS_TOKEN_EXPIRE_HOURS = 1  # 1 hour; use refresh tokens for longer sessions
 
+ADMIN_DISPLAY_NAME: str = os.getenv("ADMIN_DISPLAY_NAME", "Admin")
+ADMIN_ROLE: str = os.getenv("ADMIN_ROLE", "SAD")
+ORG_ID: str = os.getenv("ORG_ID", "default")
+ORG_NAME: str = os.getenv("ORG_NAME", "ACT Angel AI")
+ORG_SLUG: str = os.getenv("ORG_SLUG", "act-angel-ai")
+
 if not ADMIN_USERID:
     raise ValueError("ADMIN_USERID missing — add it to .env")
 
@@ -49,15 +55,15 @@ async def login(body: LoginRequest, response: Response):
         secure=os.getenv("SECURE_COOKIES", "true").lower() == "true",
     )
 
-    return {"userId": ADMIN_USERID, "role": "SAD", "displayName": "Admin"}
+    return {"userId": ADMIN_USERID, "role": ADMIN_ROLE, "displayName": ADMIN_DISPLAY_NAME}
 
 
 @router.get("/auth/me")
 async def get_me(current_user: dict = Depends(get_current_user)):
     return {
         "userId": current_user["user_id"],
-        "role": "SAD",
-        "displayName": "Admin",
+        "role": ADMIN_ROLE,
+        "displayName": ADMIN_DISPLAY_NAME,
     }
 
 
@@ -72,8 +78,8 @@ async def list_organizations(current_user: dict = Depends(get_current_user)):
     """Return the single default organisation for this single-tenant deployment."""
     return [
         {
-            "id": "default",
-            "name": "ACT Angel AI",
-            "slug": "act-angel-ai",
+            "id": ORG_ID,
+            "name": ORG_NAME,
+            "slug": ORG_SLUG,
         }
     ]

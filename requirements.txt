@@ -11,3 +11,4 @@ httpx~=0.28
 cloudinary~=1.41
 alembic~=1.14
 pydantic~=2.10
+redis>=5.0.0

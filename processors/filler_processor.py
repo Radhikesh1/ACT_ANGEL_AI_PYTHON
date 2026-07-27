@@ -1,43 +1,39 @@
-# filler_processor.py
+import random
 
 from pipecat.processors.frame_processor import FrameProcessor
-
-from pipecat.frames.frames import (
-    TextFrame,
-)
+from pipecat.frames.frames import TextFrame
 
 from frames.custom_frames import FillerRequestFrame
+from utils.filler_text import FILLERS_ENGLISH, FILLERS_BENGALI
+
+_DEFAULT_FILLERS: dict[str, list[str]] = {
+    "en": FILLERS_ENGLISH,
+    "hi": ["एक क्षण रुकिए।", "मैं देख रहा हूँ।", "थोड़ा इंतज़ार करें।"],
+    "bn": FILLERS_BENGALI,
+}
 
 
 class FillerProcessor(FrameProcessor):
 
-    async def process_frame(self, frame, direction):
+    def __init__(self, call_id: str = "", filler_messages: dict | None = None):
+        super().__init__()
+        self.call_id = call_id
+        self.filler_messages = filler_messages or {}
 
+    async def process_frame(self, frame, direction):
         await super().process_frame(frame, direction)
 
-        # Handle custom filler request
         if isinstance(frame, FillerRequestFrame):
+            lang = frame.language  # "en", "hi", "bn"
 
-            if frame.language == "bn":
-
-                filler_text = "একটু ভাবছি"
-
-            elif frame.language == "hi":
-
-                filler_text = "एक क्षण सोच रहा हूँ"
-
+            custom = self.filler_messages.get(lang)
+            if custom:
+                filler_text = custom
             else:
+                pool = _DEFAULT_FILLERS.get(lang, _DEFAULT_FILLERS["en"])
+                filler_text = random.choice(pool)
 
-                filler_text = "Just thinking"
-
-
-            await self.push_frame(
-                TextFrame(filler_text),
-                direction,
-            )
-
+            await self.push_frame(TextFrame(filler_text), direction)
             return
 
-        # Pass all other frames
         await self.push_frame(frame, direction)
-
