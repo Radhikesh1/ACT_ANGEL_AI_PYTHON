@@ -111,6 +111,7 @@ async def get_answer_xml(request: Request):
 
     # Look up which assistant owns this number
     assistant_config: dict | None = None
+    resolved_org_id: str | None = None
 
     async for db in get_db():
         result = await db.execute(
@@ -138,8 +139,8 @@ async def get_answer_xml(request: Request):
                     "intent_triggers": asst.intent_triggers or [],
                     "filler_messages": asst.filler_messages or {},
                 }
-
-    resolved_org_id = str(asst.organization_id) if assistant_config and asst.organization_id else None
+                if asst.organization_id:
+                    resolved_org_id = str(asst.organization_id)
 
     call_sessions[call_uuid] = {
         "from_number": from_number,
@@ -160,7 +161,7 @@ async def get_answer_xml(request: Request):
         bidirectional="true"
         keepCallAlive="true"
         contentType="audio/x-mulaw;rate=8000">
-        wss://{domain}/ws
+        wss://{DOMAIN}/ws
     </Stream>
 </Response>"""
 
