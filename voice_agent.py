@@ -4,6 +4,7 @@ import time
 import json
 import uuid
 from datetime import datetime
+from typing import Any, cast
 
 import httpx
 from dotenv import load_dotenv
@@ -20,7 +21,7 @@ from pipecat.transports.websocket.fastapi import (
 from pipecat.serializers.plivo import PlivoFrameSerializer
 from pipecat.services.sarvam.stt import SarvamSTTService
 from pipecat.services.openai.llm import OpenAILLMService
-from pipecat.processors.aggregators.llm_context import LLMContext
+from pipecat.processors.aggregators.llm_context import LLMContext, LLMContextMessage
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
 from pipecat.frames.frames import TTSSpeakFrame
 
@@ -34,7 +35,7 @@ from utils.session_state import call_sessions
 from utils.tts_factory import create_tts
 from utils import call_log_manager
 from database.connection import AsyncSessionLocal
-from database.models import CallLog, Assistant
+from database.models import CallLog, Assistant, VoiceNumber
 from services.recording_service import start_recording, fetch_and_upload
 from services.cost_service import calculate_cost, cost_to_json
 
@@ -173,7 +174,6 @@ async def _finalize_call(
 
     if not organization_id and to_number:
         try:
-            from sqlalchemy import or_ as _or
             to_variants = [to_number, "+" + to_number.lstrip("+")]
             async with AsyncSessionLocal() as db:
                 from sqlalchemy import select as _select
@@ -341,7 +341,7 @@ async def run_bot(websocket_client):
     stream_id = call_data["stream_id"]
     call_id = call_data["call_id"]
 
-    session = call_sessions.get(call_id, {})
+    session: dict = call_sessions.get(call_id) or {}
     customer_number: str = session.get("from_number", "")
     to_number: str = session.get("to_number", "")
     assistant_config: dict = session.get("assistant_config") or {}
@@ -516,7 +516,7 @@ async def run_bot(websocket_client):
     # -----------------------------------
 
     context = LLMContext(
-        messages=[{"role": "system", "content": system_prompt}]
+        messages=[cast(LLMContextMessage, {"role": "system", "content": system_prompt})]
     )
 
     context_aggregator = LLMContextAggregatorPair(context)
@@ -601,9 +601,10 @@ async def run_bot(websocket_client):
         duration = int(time.time() - pipeline_start_ts)
         clog.info(f"Call ended | duration={duration}s | status={call_status}")
         # Prepend welcome message so the transcript starts from the assistant greeting
+        raw_messages: list[Any] = list(context.messages)
         chat_messages = [{"role": "assistant", "content": welcome_message}] + [
-            {"role": m["role"], "content": m.get("content") or ""}
-            for m in context.messages
+            {"role": m.get("role", ""), "content": m.get("content") or ""}
+            for m in raw_messages
             if m.get("role") != "system"
         ]
         chars_used = sum(len(m["content"]) for m in chat_messages)

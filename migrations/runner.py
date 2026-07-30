@@ -20,6 +20,8 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncConnection
 load_dotenv()
 
 DATABASE_URL: str = os.getenv("DATABASE_URL") or ""
+if DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
 
 
 # ── Migration helpers ─────────────────────────────────────────────────────────
@@ -485,6 +487,22 @@ async def migration_014_add_dynamic_config(conn: AsyncConnection):
 
 # ── Registry — add new migrations here in order ───────────────────────────────
 
+async def migration_015_timestamp_with_timezone(conn):
+    """Convert TIMESTAMP WITHOUT TIME ZONE → TIMESTAMPTZ on all datetime columns."""
+    conversions = [
+        ("assistants",  "created_at"),
+        ("assistants",  "updated_at"),
+        ("call_logs",   "started_at"),
+        ("call_logs",   "ended_at"),
+    ]
+    for table, col in conversions:
+        await conn.execute(text(
+            f"ALTER TABLE pipecat.{table} "
+            f"ALTER COLUMN {col} TYPE TIMESTAMPTZ "
+            f"USING {col} AT TIME ZONE 'UTC'"
+        ))
+
+
 MIGRATIONS = [
     ("001_create_assistants",           migration_001_create_assistants),
     ("002_create_plivo_numbers",        migration_002_create_plivo_numbers),
@@ -500,6 +518,7 @@ MIGRATIONS = [
     ("012_add_org_id_call_logs",        migration_012_add_org_id_call_logs),
     ("013_setup_pipecat_schema",        migration_013_setup_pipecat_schema),
     ("014_add_dynamic_config",          migration_014_add_dynamic_config),
+    ("015_timestamp_with_timezone",     migration_015_timestamp_with_timezone),
 ]
 
 

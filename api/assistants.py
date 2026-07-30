@@ -109,6 +109,15 @@ async def _get_or_404(db: AsyncSession, aid: uuid.UUID, org_id: str | None = Non
     return a
 
 
+def _needs_config(a: "Assistant") -> bool:
+    """True when the assistant has no meaningful dynamic config and needs auto-generation."""
+    filler = a.filler_messages or {}
+    has_faq = bool(a.faq_items)
+    has_intents = bool(a.intent_triggers)
+    has_filler = any(isinstance(v, str) and v.strip() for v in filler.values())
+    return not (has_faq or has_intents or has_filler)
+
+
 def _pydantic_list(items: Any) -> list | None:
     """Convert a list of Pydantic models to plain dicts, or pass through if already dicts."""
     if items is None:
@@ -119,7 +128,11 @@ def _pydantic_list(items: Any) -> list | None:
 def _pydantic_dict(obj: Any) -> dict | None:
     if obj is None:
         return None
-    return obj.model_dump() if hasattr(obj, "model_dump") else obj
+    d = obj.model_dump() if hasattr(obj, "model_dump") else obj
+    # Drop empty-string values so {"en": "", "hi": "", "bn": ""} → None
+    if isinstance(d, dict):
+        d = {k: v for k, v in d.items() if v != ""}
+    return d or None
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -167,6 +180,19 @@ async def create_assistant(
     await db.commit()
     await db.refresh(a)
     logger.info(f"[Assistant] Created: id={a.id} name='{a.name}' org={org_id}")
+
+    # Auto-generate config if none was supplied at creation time
+    if _needs_config(a):
+        logger.info(f"[Assistant] Auto-generating config on create: id={a.id}")
+        generated = await generate_assistant_config(a.system_prompt)
+        if generated:
+            a.faq_items = generated.get("faq_items") or a.faq_items
+            a.intent_triggers = generated.get("intent_triggers") or a.intent_triggers
+            a.filler_messages = generated.get("filler_messages") or a.filler_messages
+            a.updated_at = datetime.now(timezone.utc)
+            await db.commit()
+            await db.refresh(a)
+
     return _serialize(a)
 
 
@@ -277,7 +303,7 @@ async def publish_assistant(
     a = await _get_or_404(db, aid, org_id)
 
     # Auto-generate config if not yet configured
-    if not a.faq_items and not a.intent_triggers and not a.filler_messages:
+    if _needs_config(a):
         logger.info(f"[Assistant] Auto-generating config for publish: id={a.id}")
         generated = await generate_assistant_config(a.system_prompt)
         if generated:

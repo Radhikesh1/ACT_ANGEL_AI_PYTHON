@@ -6,9 +6,10 @@ import json
 import os
 
 import httpx
+from dotenv import load_dotenv
 from loguru import logger
 
-_OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+load_dotenv()
 
 _PROMPT = """\
 You are a configuration assistant for a voice AI product.
@@ -37,15 +38,18 @@ System prompt:
 
 async def generate_assistant_config(system_prompt: str) -> dict:
     """Return generated FAQ, intent triggers, and filler messages for the given prompt."""
-    if not _OPENAI_API_KEY:
+    api_key = os.getenv("OPENAI_API_KEY", "")
+    if not api_key:
         logger.warning("[ConfigGenerator] OPENAI_API_KEY not set — skipping auto-generation")
         return {}
 
+    logger.info(f"[ConfigGenerator] Calling OpenAI for config generation (prompt length: {len(system_prompt)})")
+
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(
                 "https://api.openai.com/v1/chat/completions",
-                headers={"Authorization": f"Bearer {_OPENAI_API_KEY}"},
+                headers={"Authorization": f"Bearer {api_key}"},
                 json={
                     "model": "gpt-4o-mini",
                     "temperature": 0.2,
@@ -53,14 +57,28 @@ async def generate_assistant_config(system_prompt: str) -> dict:
                     "messages": [{"role": "user", "content": _PROMPT + system_prompt}],
                 },
             )
-            resp.raise_for_status()
-            content = resp.json()["choices"][0]["message"]["content"]
+
+            if resp.status_code != 200:
+                logger.error(
+                    f"[ConfigGenerator] OpenAI returned HTTP {resp.status_code}: {resp.text[:500]}"
+                )
+                return {}
+
+            data = resp.json()
+            content = data["choices"][0]["message"]["content"]
             result = json.loads(content)
             logger.info(
                 f"[ConfigGenerator] Generated {len(result.get('faq_items', []))} FAQ items, "
                 f"{len(result.get('intent_triggers', []))} intent triggers"
             )
             return result
+
+    except httpx.TimeoutException:
+        logger.error("[ConfigGenerator] OpenAI request timed out after 60s")
+        return {}
+    except (KeyError, json.JSONDecodeError) as exc:
+        logger.error(f"[ConfigGenerator] Failed to parse OpenAI response: {exc}")
+        return {}
     except Exception as exc:
-        logger.error(f"[ConfigGenerator] Generation failed: {exc}")
+        logger.error(f"[ConfigGenerator] Unexpected error: {type(exc).__name__}: {exc}")
         return {}

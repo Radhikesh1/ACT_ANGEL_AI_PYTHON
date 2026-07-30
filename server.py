@@ -5,7 +5,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from loguru import logger
-from sqlalchemy import select, or_
+from sqlalchemy import select
 
 from database.connection import get_db
 from database.models import VoiceNumber, Assistant

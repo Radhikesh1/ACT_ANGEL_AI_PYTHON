@@ -33,9 +33,9 @@ class Assistant(Base):
     intent_triggers: Mapped[list | None] = mapped_column(JSONB, nullable=True, default=None)
     filler_messages: Mapped[dict | None] = mapped_column(JSONB, nullable=True, default=None)
     status: Mapped[str] = mapped_column(String(20), default="development")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
     )
 
     numbers: Mapped[list["VoiceNumber"]] = relationship(
@@ -110,5 +110,5 @@ class CallLog(Base):
     recording_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     cost_breakdown: Mapped[str | None] = mapped_column(Text, nullable=True)
     total_cost: Mapped[float | None] = mapped_column(Float, nullable=True)
-    started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-    ended_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ended_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
