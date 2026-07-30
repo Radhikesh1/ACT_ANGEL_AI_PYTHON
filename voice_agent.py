@@ -11,8 +11,8 @@ from dotenv import load_dotenv
 from loguru import logger
 
 from pipecat.pipeline.pipeline import Pipeline
-from pipecat.pipeline.runner import PipelineRunner
-from pipecat.pipeline.task import PipelineTask, PipelineParams
+from pipecat.workers.runner import WorkerRunner
+from pipecat.pipeline.worker import PipelineWorker, PipelineParams
 from pipecat.runner.utils import parse_telephony_websocket
 from pipecat.transports.websocket.fastapi import (
     FastAPIWebsocketTransport,
@@ -571,7 +571,7 @@ async def run_bot(websocket_client):
     # Task
     # -----------------------------------
 
-    task = PipelineTask(pipeline, params=PipelineParams())
+    task = PipelineWorker(pipeline, params=PipelineParams())
 
     # -----------------------------------
     # Welcome message
@@ -583,13 +583,14 @@ async def run_bot(websocket_client):
     # Run
     # -----------------------------------
 
-    runner = PipelineRunner()
+    runner = WorkerRunner()
     clog.info("Pipeline running")
     call_status = "user-ended"
     error_message = None
     pipeline_start_ts = time.time()   # measure only actual voice call time
     try:
-        await runner.run(task)
+        await runner.add_workers(task)
+        await runner.run()
     except BaseException as e:
         if not isinstance(e, asyncio.CancelledError):
             call_status = "error"
