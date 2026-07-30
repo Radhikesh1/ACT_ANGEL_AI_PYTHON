@@ -75,7 +75,7 @@ class VoiceNumber(Base):
 
 
 class VoiceProviderSetting(Base):
-    """Per-org, per-provider key-value settings. organization_id='' for global defaults."""
+    """Per-org Plivo/Twilio credentials. organizationId='' stores global defaults."""
     __tablename__ = "voice_provider_settings"
     __table_args__ = (
         PrimaryKeyConstraint("organization_id", "provider", "key"),

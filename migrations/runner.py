@@ -10,18 +10,11 @@ To add a new migration:
   2. Register it at the bottom of MIGRATIONS list.
 """
 
-import os
-
-from dotenv import load_dotenv
 from loguru import logger
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncConnection
+from sqlalchemy.ext.asyncio import AsyncConnection
 
-load_dotenv()
-
-DATABASE_URL: str = os.getenv("DATABASE_URL") or ""
-if DATABASE_URL.startswith("postgresql://"):
-    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
+from database.connection import engine
 
 
 # ── Migration helpers ─────────────────────────────────────────────────────────
@@ -525,29 +518,21 @@ MIGRATIONS = [
 # ── Runner ────────────────────────────────────────────────────────────────────
 
 async def run_migrations():
-    if not DATABASE_URL:
-        raise ValueError("DATABASE_URL missing — add it to .env")
+    async with engine.begin() as conn:
+        await _ensure_tracking_table(conn)
 
-    engine = create_async_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
+        applied = 0
+        for name, fn in MIGRATIONS:
+            if await _is_applied(conn, name):
+                logger.debug(f"[Migration] {name} already applied — skipped")
+                continue
 
-    try:
-        async with engine.begin() as conn:
-            await _ensure_tracking_table(conn)
+            logger.info(f"[Migration] Applying {name} …")
+            await fn(conn)
+            await _mark_applied(conn, name)
+            applied += 1
 
-            applied = 0
-            for name, fn in MIGRATIONS:
-                if await _is_applied(conn, name):
-                    logger.debug(f"[Migration] {name} already applied — skipped")
-                    continue
-
-                logger.info(f"[Migration] Applying {name} …")
-                await fn(conn)
-                await _mark_applied(conn, name)
-                applied += 1
-
-            if applied == 0:
-                logger.info("[Migration] All migrations already applied — nothing to do")
-            else:
-                logger.info(f"[Migration] {applied} migration(s) applied successfully")
-    finally:
-        await engine.dispose()
+        if applied == 0:
+            logger.info("[Migration] All migrations already applied — nothing to do")
+        else:
+            logger.info(f"[Migration] {applied} migration(s) applied successfully")

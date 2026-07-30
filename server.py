@@ -8,9 +8,10 @@ from loguru import logger
 from sqlalchemy import select
 
 from database.connection import get_db
-from database.models import VoiceNumber, Assistant
+from database.models import VoiceNumber, Assistant, VoiceProviderSetting
 from migrations.runner import run_migrations
 from utils.session_state import call_sessions, _redis_client, _REDIS_URL
+from utils.phone_utils import mask_phone
 from voice_agent import run_bot
 
 from api.auth import router as auth_router
@@ -18,17 +19,6 @@ from api.assistants import router as assistants_router
 from api.call_logs import router as call_logs_router
 
 load_dotenv()
-
-
-def mask_phone(phone: str) -> str:
-    """Mask phone number for logging, keeping only last 4 digits."""
-    if not phone:
-        return ""
-    digits = ''.join(c for c in phone if c.isdigit())
-    if len(digits) <= 4:
-        return "*" * len(digits)
-    return "*" * (len(digits) - 4) + digits[-4:]
-
 
 app = FastAPI(title="ACT Angel AI API")
 
@@ -142,11 +132,38 @@ async def get_answer_xml(request: Request):
                 if asst.organization_id:
                     resolved_org_id = str(asst.organization_id)
 
+        # Look up per-org Plivo credentials; fall back to global row, then env vars.
+        plivo_auth_id = os.getenv("PLIVO_AUTH_ID") or ""
+        plivo_auth_token = os.getenv("PLIVO_AUTH_TOKEN") or ""
+        if resolved_org_id:
+            orgs_to_check = [resolved_org_id, ""]
+            cred_result = await db.execute(
+                select(VoiceProviderSetting).where(
+                    VoiceProviderSetting.provider == "plivo",
+                    VoiceProviderSetting.organization_id.in_(orgs_to_check),
+                )
+            )
+            cred_rows = cred_result.scalars().all()
+
+            def _pick(key: str, fallback: str) -> str:
+                for row in cred_rows:
+                    if row.organization_id == resolved_org_id and row.key == key and row.value:
+                        return row.value
+                for row in cred_rows:
+                    if row.organization_id == "" and row.key == key and row.value:
+                        return row.value
+                return fallback
+
+            plivo_auth_id = _pick("auth_id", plivo_auth_id)
+            plivo_auth_token = _pick("auth_token", plivo_auth_token)
+
     call_sessions[call_uuid] = {
         "from_number": from_number,
         "to_number": to_number,
         "assistant_config": assistant_config,
         "organization_id": resolved_org_id,
+        "plivo_auth_id": plivo_auth_id,
+        "plivo_auth_token": plivo_auth_token,
     }
 
     logger.info(

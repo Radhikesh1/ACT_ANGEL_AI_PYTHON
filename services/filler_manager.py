@@ -1,18 +1,6 @@
 import random
 
-from utils.filler_text import (
-    FILLERS_ENGLISH,
-    FILLERS_BENGALI,
-    APPOINTMENT_FILLERS,
-)
-
-
-def get_filler(language="english"):
-
-    if language == "bengali":
-        return random.choice(FILLERS_BENGALI)
-
-    return random.choice(FILLERS_ENGLISH)
+from utils.filler_text import APPOINTMENT_FILLERS
 
 
 def get_appointment_filler(language="english"):

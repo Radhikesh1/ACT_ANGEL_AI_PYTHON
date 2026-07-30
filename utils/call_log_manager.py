@@ -39,7 +39,3 @@ def end(call_id: str) -> None:
     sink_id = _sinks.pop(call_id, None)
     if sink_id is not None:
         logger.remove(sink_id)
-
-
-def get_log_path(call_id: str) -> Path:
-    return LOG_DIR / f"{call_id}.log"

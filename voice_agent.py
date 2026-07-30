@@ -32,6 +32,7 @@ from processors.intent_router import IntentRouterProcessor
 from processors.noise_gate_processor import NoiseFilterProcessor
 
 from utils.session_state import call_sessions
+from utils.phone_utils import mask_phone
 from utils.tts_factory import create_tts
 from utils import call_log_manager
 from database.connection import AsyncSessionLocal
@@ -40,16 +41,6 @@ from services.recording_service import start_recording, fetch_and_upload
 from services.cost_service import calculate_cost, cost_to_json
 
 load_dotenv()
-
-
-def mask_phone(phone: str) -> str:
-    """Mask phone number for logging, keeping only last 4 digits."""
-    if not phone:
-        return ""
-    digits = ''.join(c for c in phone if c.isdigit())
-    if len(digits) <= 4:
-        return "*" * len(digits)
-    return "*" * (len(digits) - 4) + digits[-4:]
 
 
 OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY") or ""
@@ -156,6 +147,8 @@ async def _finalize_call(
     ended_at: datetime,
     end_of_call_url: str | None,
     llm_model: str,
+    plivo_auth_id: str = "",
+    plivo_auth_token: str = "",
     metadata: dict | None = None,
 ):
     """Detached task: update (or insert) call log, fire webhooks, then save recording URL.
@@ -265,7 +258,7 @@ async def _finalize_call(
     final_duration: int = duration
     if log_id:
         try:
-            recording_url, recording_duration = await fetch_and_upload(call_id)
+            recording_url, recording_duration = await fetch_and_upload(call_id, plivo_auth_id, plivo_auth_token)
             if recording_url:
                 async with AsyncSessionLocal() as db:
                     saved = await db.get(CallLog, log_id)
@@ -346,6 +339,8 @@ async def run_bot(websocket_client):
     to_number: str = session.get("to_number", "")
     assistant_config: dict = session.get("assistant_config") or {}
     organization_id: str | None = session.get("organization_id")
+    plivo_auth_id: str = session.get("plivo_auth_id") or ""
+    plivo_auth_token: str = session.get("plivo_auth_token") or ""
 
     system_prompt: str | None = assistant_config.get("system_prompt")
     if not system_prompt:
@@ -423,7 +418,7 @@ async def run_bot(websocket_client):
     # Start call recording (optional)
     # -----------------------------------
 
-    await start_recording(call_id)
+    await start_recording(call_id, plivo_auth_id, plivo_auth_token)
     clog.info("[Recording] Recording started")
 
     # -----------------------------------
@@ -466,8 +461,8 @@ async def run_bot(websocket_client):
     serializer = PlivoFrameSerializer(
         stream_id=stream_id,
         call_id=call_id,
-        auth_id=os.getenv("PLIVO_AUTH_ID"),
-        auth_token=os.getenv("PLIVO_AUTH_TOKEN"),
+        auth_id=plivo_auth_id or None,
+        auth_token=plivo_auth_token or None,
     )
 
     # -----------------------------------
@@ -633,5 +628,7 @@ async def run_bot(websocket_client):
             ended_at=ended_at,
             end_of_call_url=end_of_call_url,
             llm_model=llm_model,
+            plivo_auth_id=plivo_auth_id,
+            plivo_auth_token=plivo_auth_token,
             metadata=customer_metadata,
         ))

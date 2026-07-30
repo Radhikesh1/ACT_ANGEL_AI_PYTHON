@@ -1,13 +1,17 @@
 FILLERS_ENGLISH = [
-
     "One moment please.",
     "Let me check that for you.",
     "Please hold on.",
     "Let me help you with that.",
 ]
 
-FILLERS_BENGALI = [
+FILLERS_HINDI = [
+    "एक क्षण रुकिए।",
+    "मैं देख रहा हूँ।",
+    "थोड़ा इंतज़ार करें।",
+]
 
+FILLERS_BENGALI = [
     "একটু অপেক্ষা করুন।",
     "আমি দেখে নিচ্ছি।",
     "একটু সময় দিন।",

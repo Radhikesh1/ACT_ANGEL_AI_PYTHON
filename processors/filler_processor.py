@@ -4,11 +4,11 @@ from pipecat.processors.frame_processor import FrameProcessor
 from pipecat.frames.frames import TextFrame
 
 from frames.custom_frames import FillerRequestFrame
-from utils.filler_text import FILLERS_ENGLISH, FILLERS_BENGALI
+from utils.filler_text import FILLERS_ENGLISH, FILLERS_HINDI, FILLERS_BENGALI
 
 _DEFAULT_FILLERS: dict[str, list[str]] = {
     "en": FILLERS_ENGLISH,
-    "hi": ["एक क्षण रुकिए।", "मैं देख रहा हूँ।", "थोड़ा इंतज़ार करें।"],
+    "hi": FILLERS_HINDI,
     "bn": FILLERS_BENGALI,
 }
 

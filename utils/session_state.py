@@ -203,4 +203,3 @@ class RedisDict:
 conversation_states = RedisDict(_redis_client, "conv:")
 call_sessions       = RedisDict(_redis_client, "sess:")
 language_sessions   = RedisDict(_redis_client, "lang:")
-call_states         = RedisDict(_redis_client, "state:")
