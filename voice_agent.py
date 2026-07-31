@@ -33,7 +33,7 @@ from processors.noise_gate_processor import NoiseFilterProcessor
 
 from utils.session_state import call_sessions
 from utils.phone_utils import mask_phone
-from utils.tts_factory import create_tts
+from utils.tts_factory import create_tts, SARVAM_API_KEY
 from utils import call_log_manager
 from database.connection import AsyncSessionLocal
 from database.models import CallLog, Assistant, VoiceNumber
@@ -44,13 +44,9 @@ load_dotenv()
 
 
 OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY") or ""
-SARVAM_API_KEY: str = os.getenv("SARVAM_API_KEY") or ""
 
 if not OPENAI_API_KEY:
     raise ValueError("OPENAI_API_KEY missing")
-
-if not SARVAM_API_KEY:
-    raise ValueError("SARVAM_API_KEY missing")
 
 
 async def _call_prefetch_webhook(url: str, session_id: str, agent_id: str, from_number: str, to_number: str) -> dict:

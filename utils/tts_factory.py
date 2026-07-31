@@ -1,15 +1,8 @@
-from dotenv import load_dotenv
-from pipecat.services.sarvam.tts import (
-    SarvamTTSService,
-)
-
-from utils.language_manager import (
-    get_voice,
-)
-
 import os
 
-load_dotenv()
+from pipecat.services.sarvam.tts import SarvamTTSService
+
+from utils.language_manager import get_voice
 
 SARVAM_API_KEY: str = os.getenv(
     "SARVAM_API_KEY"

@@ -8,7 +8,8 @@ from loguru import logger
 from sqlalchemy import select
 
 from database.connection import get_db
-from database.models import VoiceNumber, Assistant, VoiceProviderSetting
+from database.models import VoiceNumber, Assistant
+from utils.plivo_creds import get_plivo_creds
 from migrations.runner import run_migrations
 from utils.session_state import call_sessions, _redis_client, _REDIS_URL
 from utils.phone_utils import mask_phone
@@ -132,30 +133,13 @@ async def get_answer_xml(request: Request):
                 if asst.organization_id:
                     resolved_org_id = str(asst.organization_id)
 
-        # Look up per-org Plivo credentials; fall back to global row, then env vars.
-        plivo_auth_id = os.getenv("PLIVO_AUTH_ID") or ""
-        plivo_auth_token = os.getenv("PLIVO_AUTH_TOKEN") or ""
-        if resolved_org_id:
-            orgs_to_check = [resolved_org_id, ""]
-            cred_result = await db.execute(
-                select(VoiceProviderSetting).where(
-                    VoiceProviderSetting.provider == "plivo",
-                    VoiceProviderSetting.organization_id.in_(orgs_to_check),
-                )
+        plivo_auth_id, plivo_auth_token = await get_plivo_creds(db, resolved_org_id or "")
+        if not plivo_auth_id:
+            logger.warning(
+                f"[AnswerCall] No Plivo credentials found for org={resolved_org_id} — "
+                "auto-hangup and recording will be unavailable for this call. "
+                "Import a number with credentials to fix this."
             )
-            cred_rows = cred_result.scalars().all()
-
-            def _pick(key: str, fallback: str) -> str:
-                for row in cred_rows:
-                    if row.organization_id == resolved_org_id and row.key == key and row.value:
-                        return row.value
-                for row in cred_rows:
-                    if row.organization_id == "" and row.key == key and row.value:
-                        return row.value
-                return fallback
-
-            plivo_auth_id = _pick("auth_id", plivo_auth_id)
-            plivo_auth_token = _pick("auth_token", plivo_auth_token)
 
     call_sessions[call_uuid] = {
         "from_number": from_number,
