@@ -118,8 +118,21 @@ async def _download_plivo_recording(plivo_url: str, auth_id: str, auth_token: st
         return None
 
 
-def _upload_to_cloudinary(audio_bytes: bytes, call_id: str) -> str | None:
-    """Upload MP3 bytes to Cloudinary and return the secure URL."""
+def _upload_to_cloudinary(
+    audio_bytes: bytes,
+    call_id: str,
+    cloud_name: str | None = None,
+    api_key: str | None = None,
+    api_secret: str | None = None,
+) -> str | None:
+    """
+    Upload MP3 bytes to Cloudinary and return the secure URL.
+
+    Per-call cloud_name/api_key/api_secret (an org override) are passed as
+    per-call kwargs, overriding the global config for this upload only — no
+    shared mutable state, safe under concurrent uploads from different orgs.
+    When not provided, falls back to the module-level default account.
+    """
     _ensure_cloudinary()
     try:
         result = cloudinary.uploader.upload(
@@ -129,6 +142,9 @@ def _upload_to_cloudinary(audio_bytes: bytes, call_id: str) -> str | None:
             public_id=f"call-{call_id}",
             overwrite=True,
             format="mp3",
+            **({"cloud_name": cloud_name} if cloud_name else {}),
+            **({"api_key": api_key} if api_key else {}),
+            **({"api_secret": api_secret} if api_secret else {}),
         )
         url: str = result.get("secure_url") or result.get("url") or ""
         logger.info(f"[Recording] Uploaded to Cloudinary: {url}")
@@ -139,18 +155,27 @@ def _upload_to_cloudinary(audio_bytes: bytes, call_id: str) -> str | None:
 
 
 async def fetch_and_upload(
-    call_id: str, auth_id: str, auth_token: str
+    call_id: str,
+    auth_id: str,
+    auth_token: str,
+    cloud_name: str | None = None,
+    api_key: str | None = None,
+    api_secret: str | None = None,
 ) -> tuple[str | None, int | None]:
     """
     Full pipeline: poll Plivo → download → upload to Cloudinary.
     Returns (cloudinary_url, recording_duration_seconds).
     Both are None on failure or missing credentials.
+
+    cloud_name/api_key/api_secret let the caller pass an org-specific
+    Cloudinary account; omit (or pass None) to use the shared default.
     """
     if not auth_id or not auth_token:
         logger.info("[Recording] Plivo credentials missing — skipping recording fetch")
         return None, None
 
-    if not all([CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET]):
+    has_org_override = cloud_name and api_key and api_secret
+    if not has_org_override and not all([CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET]):
         logger.info("[Recording] Cloudinary not configured — skipping upload")
         return None, None
 
@@ -166,6 +191,6 @@ async def fetch_and_upload(
     loop = asyncio.get_running_loop()
     cloudinary_url = await loop.run_in_executor(
         None,
-        lambda: _upload_to_cloudinary(audio_bytes, call_id),
+        lambda: _upload_to_cloudinary(audio_bytes, call_id, cloud_name, api_key, api_secret),
     )
     return cloudinary_url, duration_secs

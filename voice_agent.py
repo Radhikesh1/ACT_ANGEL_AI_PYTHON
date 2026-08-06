@@ -145,6 +145,13 @@ async def _finalize_call(
     llm_model: str,
     plivo_auth_id: str = "",
     plivo_auth_token: str = "",
+    cloudinary_cloud_name: str | None = None,
+    cloudinary_api_key: str | None = None,
+    cloudinary_api_secret: str | None = None,
+    used_own_sarvam: bool = False,
+    used_own_openai: bool = False,
+    byok_stt_rate: float | None = None,
+    byok_llm_rate: float | None = None,
     metadata: dict | None = None,
 ):
     """Detached task: update (or insert) call log, fire webhooks, then save recording URL.
@@ -183,7 +190,7 @@ async def _finalize_call(
             if log_id is not None:
                 log = await db.get(CallLog, log_id)
                 if log:
-                    cost = calculate_cost(duration, chat_messages, llm_model)
+                    cost = calculate_cost(duration, chat_messages, llm_model, used_own_sarvam, used_own_openai, byok_stt_rate, byok_llm_rate)
                     log.duration = duration
                     log.chat = json.dumps(chat_messages)
                     log.call_status = call_status
@@ -202,7 +209,7 @@ async def _finalize_call(
                 else:
                     log_id = None  # row disappeared — fall through to INSERT
             if log_id is None:
-                cost = calculate_cost(duration, chat_messages, llm_model)
+                cost = calculate_cost(duration, chat_messages, llm_model, used_own_sarvam, used_own_openai, byok_stt_rate, byok_llm_rate)
                 log_id = uuid.uuid4()
                 db.add(CallLog(
                     id=log_id,
@@ -254,7 +261,14 @@ async def _finalize_call(
     final_duration: int = duration
     if log_id:
         try:
-            recording_url, recording_duration = await fetch_and_upload(call_id, plivo_auth_id, plivo_auth_token)
+            recording_url, recording_duration = await fetch_and_upload(
+                call_id,
+                plivo_auth_id,
+                plivo_auth_token,
+                cloud_name=cloudinary_cloud_name,
+                api_key=cloudinary_api_key,
+                api_secret=cloudinary_api_secret,
+            )
             if recording_url:
                 async with AsyncSessionLocal() as db:
                     saved = await db.get(CallLog, log_id)
@@ -280,7 +294,12 @@ async def _finalize_call(
         logger.warning("[ActAngel Ingest] Skipping — organization_id could not be resolved")
     if ingest_url and organization_id:
         try:
-            cost_obj: dict = json.loads(cost_to_json(calculate_cost(final_duration, chat_messages, llm_model)))
+            cost_obj: dict = json.loads(cost_to_json(
+                calculate_cost(
+                    final_duration, chat_messages, llm_model,
+                    used_own_sarvam, used_own_openai, byok_stt_rate, byok_llm_rate,
+                )
+            ))
             raw_cost = {
                 "llm": cost_obj.get("llm_usd", 0),
                 "stt": cost_obj.get("stt_usd", 0),
@@ -302,6 +321,8 @@ async def _finalize_call(
                 },
                 "recording": {"recording_url": recording_url},
                 "cost_breakdown": raw_cost,
+                "used_own_sarvam": used_own_sarvam,
+                "used_own_openai": used_own_openai,
                 "call_status": call_status,
                 "error_message": error_message,
                 "metadata": metadata or {},
@@ -337,6 +358,28 @@ async def run_bot(websocket_client):
     organization_id: str | None = session.get("organization_id")
     plivo_auth_id: str = session.get("plivo_auth_id") or ""
     plivo_auth_token: str = session.get("plivo_auth_token") or ""
+
+    # Org-specific overrides, falling back to the shared env-configured defaults.
+    # Captured before the fallback below overwrites it — this is the "did the
+    # org bring their own key" signal used for BYOK cost handling.
+    used_own_sarvam: bool = bool(session.get("sarvam_api_key"))
+    used_own_openai: bool = bool(session.get("openai_api_key"))
+    sarvam_api_key: str = session.get("sarvam_api_key") or SARVAM_API_KEY
+    openai_api_key: str = session.get("openai_api_key") or OPENAI_API_KEY
+    cloudinary_cloud_name: str | None = session.get("cloudinary_cloud_name") or None
+    cloudinary_api_key: str | None = session.get("cloudinary_api_key") or None
+    cloudinary_api_secret: str | None = session.get("cloudinary_api_secret") or None
+
+    # SAD-configurable BYOK flat-fee rates — None means "not configured",
+    # calculate_cost() then falls back to its own env-configured defaults.
+    def _parse_rate(raw: str | None) -> float | None:
+        try:
+            return float(raw) if raw else None
+        except ValueError:
+            return None
+
+    byok_stt_rate: float | None = _parse_rate(session.get("byok_stt_rate"))
+    byok_llm_rate: float | None = _parse_rate(session.get("byok_llm_rate"))
 
     system_prompt: str | None = assistant_config.get("system_prompt")
     if not system_prompt:
@@ -480,7 +523,7 @@ async def run_bot(websocket_client):
     # -----------------------------------
 
     stt = SarvamSTTService(
-        api_key=SARVAM_API_KEY,
+        api_key=sarvam_api_key,
         settings=SarvamSTTService.Settings(model="saaras:v3"),
     )
 
@@ -489,7 +532,7 @@ async def run_bot(websocket_client):
     # -----------------------------------
 
     llm = OpenAILLMService(
-        api_key=OPENAI_API_KEY,
+        api_key=openai_api_key,
         settings=OpenAILLMService.Settings(
             model=llm_model,
             temperature=temperature,
@@ -500,7 +543,7 @@ async def run_bot(websocket_client):
     # TTS  (voice resolved from assistant default_language)
     # -----------------------------------
 
-    tts = create_tts(call_id, default_language=default_language, voice=configured_voice)
+    tts = create_tts(call_id, default_language=default_language, voice=configured_voice, api_key=sarvam_api_key)
 
     # -----------------------------------
     # Context  (dynamic system prompt)
@@ -626,5 +669,12 @@ async def run_bot(websocket_client):
             llm_model=llm_model,
             plivo_auth_id=plivo_auth_id,
             plivo_auth_token=plivo_auth_token,
+            cloudinary_cloud_name=cloudinary_cloud_name,
+            cloudinary_api_key=cloudinary_api_key,
+            cloudinary_api_secret=cloudinary_api_secret,
+            used_own_sarvam=used_own_sarvam,
+            used_own_openai=used_own_openai,
+            byok_stt_rate=byok_stt_rate,
+            byok_llm_rate=byok_llm_rate,
             metadata=customer_metadata,
         ))

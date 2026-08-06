@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import String, Text, Float, Boolean, DateTime, Integer, PrimaryKeyConstraint
+from sqlalchemy import String, Text, Float, Boolean, DateTime, Integer
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -75,14 +75,16 @@ class VoiceNumber(Base):
 
 
 class VoiceProviderSetting(Base):
-    """Per-org Plivo/Twilio credentials. organizationId='' stores global defaults."""
+    """Per-org/per-assistant Plivo/Sarvam/OpenAI/Cloudinary/BYOK-billing settings.
+    organization_id='' stores global defaults; assistant_id=NULL means the row
+    isn't assistant-scoped. Resolution priority: assistant -> org -> global.
+    Rows are only ever written by Node (PATCH /api/voice/settings/:provider)."""
     __tablename__ = "voice_provider_settings"
-    __table_args__ = (
-        PrimaryKeyConstraint("organization_id", "provider", "key"),
-        {"schema": "pipecat"},
-    )
+    __table_args__ = {"schema": "pipecat"}
 
+    id: Mapped[str] = mapped_column(String, primary_key=True)
     organization_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    assistant_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     provider: Mapped[str] = mapped_column(String(20), nullable=False)
     key: Mapped[str] = mapped_column(String(100), nullable=False)
     value: Mapped[str | None] = mapped_column(Text, nullable=True)

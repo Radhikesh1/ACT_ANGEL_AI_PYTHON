@@ -10,6 +10,7 @@ from sqlalchemy import select
 from database.connection import get_db
 from database.models import VoiceNumber, Assistant
 from utils.plivo_creds import get_plivo_creds
+from utils.provider_creds import get_org_provider_key
 from migrations.runner import run_migrations
 from utils.session_state import call_sessions, _redis_client, _REDIS_URL
 from utils.phone_utils import mask_phone
@@ -141,6 +142,26 @@ async def get_answer_xml(request: Request):
                 "Import a number with credentials to fix this."
             )
 
+        # Org-specific overrides for Sarvam/OpenAI/Cloudinary — empty string
+        # means "nothing configured", voice_agent.py falls back to its env vars.
+        org_id_for_lookup = resolved_org_id or ""
+        sarvam_api_key = await get_org_provider_key(db, org_id_for_lookup, "sarvam")
+        openai_api_key = await get_org_provider_key(db, org_id_for_lookup, "openai")
+        cloudinary_cloud_name = await get_org_provider_key(db, org_id_for_lookup, "cloudinary", "cloud_name")
+        cloudinary_api_key = await get_org_provider_key(db, org_id_for_lookup, "cloudinary", "api_key")
+        cloudinary_api_secret = await get_org_provider_key(db, org_id_for_lookup, "cloudinary", "api_secret")
+
+        # BYOK flat-fee rates — SAD-editable, scoped assistant -> org -> global.
+        # Empty string means "not configured", voice_agent.py falls back to its
+        # own env-configured defaults.
+        assistant_id_for_lookup = assistant_config["id"] if assistant_config else None
+        byok_stt_rate = await get_org_provider_key(
+            db, org_id_for_lookup, "byok_billing", "stt_flat_fee_per_minute", assistant_id_for_lookup
+        )
+        byok_llm_rate = await get_org_provider_key(
+            db, org_id_for_lookup, "byok_billing", "llm_flat_fee_per_minute", assistant_id_for_lookup
+        )
+
     call_sessions[call_uuid] = {
         "from_number": from_number,
         "to_number": to_number,
@@ -148,6 +169,13 @@ async def get_answer_xml(request: Request):
         "organization_id": resolved_org_id,
         "plivo_auth_id": plivo_auth_id,
         "plivo_auth_token": plivo_auth_token,
+        "sarvam_api_key": sarvam_api_key,
+        "openai_api_key": openai_api_key,
+        "cloudinary_cloud_name": cloudinary_cloud_name,
+        "cloudinary_api_key": cloudinary_api_key,
+        "cloudinary_api_secret": cloudinary_api_secret,
+        "byok_stt_rate": byok_stt_rate,
+        "byok_llm_rate": byok_llm_rate,
     }
 
     logger.info(

@@ -227,6 +227,12 @@ ADMIN_PASSWORD=your-secure-password
 
 > **Note:** Passwords or values containing `@` or `!` in `DATABASE_URL` must be percent-encoded: `@` → `%40`, `!` → `%21`.
 
+> **Note:** This list is not exhaustive — see `.env.example` for the full set (webhook secrets, Cloudinary, cost-tracking overrides, etc.), which is kept up to date as the source of truth.
+
+### BYOK Cost Overrides
+
+`BYOK_STT_FLAT_FEE_PER_MINUTE` / `BYOK_LLM_FLAT_FEE_PER_MINUTE` — the flat per-minute rate charged instead of the usual usage-based cost when an org supplies its own Sarvam/OpenAI key (see `services/cost_service.py`). These are also SAD-editable live from the WEB dashboard, with three levels of override — assistant, then org, then global (Global API Defaults → BYOK Flat Fees) — each taking priority over the level below it; the env var here is only the last-resort fallback when nothing's been configured on the dashboard at any level. `server.py` resolves the org id and pipecat assistant id once per call and passes both into `get_org_provider_key()` so the right tier is picked automatically.
+
 ---
 
 ## Local Development Setup

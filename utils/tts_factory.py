@@ -13,7 +13,12 @@ if not SARVAM_API_KEY:
     raise ValueError("SARVAM_API_KEY missing")
 
 
-def create_tts(call_id, default_language: str = "english", voice: str | None = None):
+def create_tts(
+    call_id,
+    default_language: str = "english",
+    voice: str | None = None,
+    api_key: str | None = None,
+):
     from utils.language_manager import initialize_language_session
     initialize_language_session(call_id, default_language)
 
@@ -22,7 +27,7 @@ def create_tts(call_id, default_language: str = "english", voice: str | None = N
 
     return SarvamTTSService(
 
-        api_key=SARVAM_API_KEY,
+        api_key=api_key or SARVAM_API_KEY,
 
         settings=SarvamTTSService.Settings(
             voice=resolved_voice,

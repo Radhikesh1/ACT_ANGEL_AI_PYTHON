@@ -48,6 +48,12 @@ _SARVAM_PER_MIN:   float = _f("SARVAM_STT_COST_PER_MINUTE",  "0.006")
 _PLIVO_PER_MIN:    float = _f("PLIVO_PHONE_COST_PER_MINUTE",  "0.003")
 _PLATFORM_PER_MIN: float = _f("PLATFORM_COST_PER_MINUTE",     "0.000")
 
+# Flat per-minute fee charged instead of the real provider-cost formula when
+# an org supplies its own Sarvam/OpenAI key — they pay that provider directly,
+# so we charge a flat orchestration fee rather than double-billing usage.
+_BYOK_STT_FLAT_PER_MIN: float = _f("BYOK_STT_FLAT_FEE_PER_MINUTE", "0.001")
+_BYOK_LLM_FLAT_PER_MIN: float = _f("BYOK_LLM_FLAT_FEE_PER_MINUTE", "0.002")
+
 
 def _llm_rates(model: str) -> tuple[float, float]:
     """Return (input_per_1M, output_per_1M) for the given model string."""
@@ -62,6 +68,10 @@ def calculate_cost(
     duration_seconds: int,
     chat_messages: list[dict],
     llm_model: str,
+    used_own_sarvam: bool = False,
+    used_own_openai: bool = False,
+    byok_stt_rate: float | None = None,
+    byok_llm_rate: float | None = None,
 ) -> dict:
     """
     Returns a cost breakdown dict:
@@ -71,11 +81,24 @@ def calculate_cost(
         "phone_usd":    float,
         "platform_usd": float,
         "total_usd":    float,
+        "used_own_sarvam": bool,
+        "used_own_openai": bool,
         "tokens":       {"input": int, "output": int},
         "model":        str,
         "duration_min": float,
     }
+
+    used_own_sarvam/used_own_openai: pass True when the org's own key was used
+    for that provider on this call — that component is then charged at the
+    flat BYOK rate instead of the real usage-based formula, since the org is
+    already paying that provider directly.
+
+    byok_stt_rate/byok_llm_rate: SAD-configurable overrides for the flat BYOK
+    rate (per minute), read from voice_provider_settings by the caller. Pass
+    None (the default) to fall back to the env-configured _BYOK_*_FLAT_PER_MIN.
     """
+    stt_flat_rate = byok_stt_rate if byok_stt_rate is not None else _BYOK_STT_FLAT_PER_MIN
+    llm_flat_rate = byok_llm_rate if byok_llm_rate is not None else _BYOK_LLM_FLAT_PER_MIN
     # ── Token estimation ──────────────────────────────────────────────────────
     # Conservative ratio of 3.5 chars/token to account for multilingual content
     # (Hindi, regional languages) which tokenise more densely than English.
@@ -95,16 +118,20 @@ def calculate_cost(
     input_tokens  = max(int(user_chars / CHARS_PER_TOKEN), 1)
     output_tokens = max(int(assistant_chars / CHARS_PER_TOKEN), 1)
 
+    duration_min = duration_seconds / 60.0
+
     # ── LLM cost ──────────────────────────────────────────────────────────────
     inp_rate, out_rate = _llm_rates(llm_model)
-    llm_usd = (
-        input_tokens  * inp_rate / 1_000_000 +
-        output_tokens * out_rate / 1_000_000
-    )
+    if used_own_openai:
+        llm_usd = duration_min * llm_flat_rate
+    else:
+        llm_usd = (
+            input_tokens  * inp_rate / 1_000_000 +
+            output_tokens * out_rate / 1_000_000
+        )
 
     # ── Duration-based costs ──────────────────────────────────────────────────
-    duration_min = duration_seconds / 60.0
-    stt_usd      = duration_min * _SARVAM_PER_MIN
+    stt_usd      = duration_min * (stt_flat_rate if used_own_sarvam else _SARVAM_PER_MIN)
     phone_usd    = duration_min * _PLIVO_PER_MIN
     platform_usd = duration_min * _PLATFORM_PER_MIN
 
@@ -116,6 +143,8 @@ def calculate_cost(
         "phone_usd":        round(phone_usd,    6),
         "platform_usd":     round(platform_usd, 6),
         "total_usd":        round(total_usd,    6),
+        "used_own_sarvam":  used_own_sarvam,
+        "used_own_openai":  used_own_openai,
         "tokens": {
             "input":  input_tokens,
             "output": output_tokens,
@@ -123,7 +152,7 @@ def calculate_cost(
         "rates": {
             "llm_input_per_1m":  inp_rate,
             "llm_output_per_1m": out_rate,
-            "stt_per_min":       _SARVAM_PER_MIN,
+            "stt_per_min":       stt_flat_rate if used_own_sarvam else _SARVAM_PER_MIN,
             "phone_per_min":     _PLIVO_PER_MIN,
             "platform_per_min":  _PLATFORM_PER_MIN,
         },
