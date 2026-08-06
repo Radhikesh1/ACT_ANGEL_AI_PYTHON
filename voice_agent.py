@@ -43,10 +43,12 @@ from services.cost_service import calculate_cost, cost_to_json
 load_dotenv()
 
 
+# Last-resort fallback only — the primary source is the per-org/global
+# `voice_provider_settings` DB row (SAD-configurable from the dashboard),
+# resolved per-call in server.py and passed through the session. Not
+# required at startup: a deployment can rely entirely on the
+# dashboard-configured global default with no OpenAI key in .env at all.
 OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY") or ""
-
-if not OPENAI_API_KEY:
-    raise ValueError("OPENAI_API_KEY missing")
 
 
 async def _call_prefetch_webhook(url: str, session_id: str, agent_id: str, from_number: str, to_number: str) -> dict:
@@ -366,6 +368,16 @@ async def run_bot(websocket_client):
     used_own_openai: bool = bool(session.get("openai_api_key"))
     sarvam_api_key: str = session.get("sarvam_api_key") or SARVAM_API_KEY
     openai_api_key: str = session.get("openai_api_key") or OPENAI_API_KEY
+    if not sarvam_api_key:
+        logger.warning(
+            f"[{call_id}] No Sarvam API key configured for org={organization_id} — "
+            "set a global default on the Global API Defaults page, or SARVAM_API_KEY in .env."
+        )
+    if not openai_api_key:
+        logger.warning(
+            f"[{call_id}] No OpenAI API key configured for org={organization_id} — "
+            "set a global default on the Global API Defaults page, or OPENAI_API_KEY in .env."
+        )
     cloudinary_cloud_name: str | None = session.get("cloudinary_cloud_name") or None
     cloudinary_api_key: str | None = session.get("cloudinary_api_key") or None
     cloudinary_api_secret: str | None = session.get("cloudinary_api_secret") or None

@@ -8,7 +8,7 @@ from loguru import logger
 from sqlalchemy import select
 
 from database.connection import get_db
-from database.models import VoiceNumber, Assistant
+from database.models import VoiceNumber, Assistant, AssistantExtension
 from utils.plivo_creds import get_plivo_creds
 from utils.provider_creds import get_org_provider_key
 from migrations.runner import run_migrations
@@ -151,15 +151,30 @@ async def get_answer_xml(request: Request):
         cloudinary_api_key = await get_org_provider_key(db, org_id_for_lookup, "cloudinary", "api_key")
         cloudinary_api_secret = await get_org_provider_key(db, org_id_for_lookup, "cloudinary", "api_secret")
 
-        # BYOK flat-fee rates — SAD-editable, scoped assistant -> org -> global.
-        # Empty string means "not configured", voice_agent.py falls back to its
+        # BYOK flat-fee rates — versioned per-assistant (mirrors the active
+        # marginVersion, set from the WEB "Update Margin" popup), falling
+        # back to the global rate (Global API Defaults page) whenever the
+        # assistant's active version left a field unset (NULL). Empty string
+        # means "not configured anywhere", voice_agent.py falls back to its
         # own env-configured defaults.
-        assistant_id_for_lookup = assistant_config["id"] if assistant_config else None
-        byok_stt_rate = await get_org_provider_key(
-            db, org_id_for_lookup, "byok_billing", "stt_flat_fee_per_minute", assistant_id_for_lookup
+        assistant_ext: AssistantExtension | None = None
+        if assistant_config:
+            ext_result = await db.execute(
+                select(AssistantExtension).where(
+                    AssistantExtension.assistant_external_id == assistant_config["id"]
+                )
+            )
+            assistant_ext = ext_result.scalar_one_or_none()
+
+        byok_stt_rate = (
+            str(assistant_ext.byok_stt_flat_fee_per_minute)
+            if assistant_ext and assistant_ext.byok_stt_flat_fee_per_minute is not None
+            else await get_org_provider_key(db, "", "byok_billing", "stt_flat_fee_per_minute")
         )
-        byok_llm_rate = await get_org_provider_key(
-            db, org_id_for_lookup, "byok_billing", "llm_flat_fee_per_minute", assistant_id_for_lookup
+        byok_llm_rate = (
+            str(assistant_ext.byok_llm_flat_fee_per_minute)
+            if assistant_ext and assistant_ext.byok_llm_flat_fee_per_minute is not None
+            else await get_org_provider_key(db, "", "byok_billing", "llm_flat_fee_per_minute")
         )
 
     call_sessions[call_uuid] = {

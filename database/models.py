@@ -1,7 +1,8 @@
 import uuid
 from datetime import datetime, timezone
+from decimal import Decimal
 
-from sqlalchemy import String, Text, Float, Boolean, DateTime, Integer
+from sqlalchemy import String, Text, Float, Boolean, DateTime, Integer, Numeric
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -88,6 +89,20 @@ class VoiceProviderSetting(Base):
     provider: Mapped[str] = mapped_column(String(20), nullable=False)
     key: Mapped[str] = mapped_column(String(100), nullable=False)
     value: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class AssistantExtension(Base):
+    """WEB-side per-assistant settings cache (default/public schema, unlike
+    the pipecat-schema tables above) — mirrors the active margin version's
+    cost fields, including BYOK flat-fee overrides. Read-only from Python's
+    perspective; server/routes/admin.ts is the only writer."""
+    __tablename__ = "assistant_extensions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    assistant_external_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    byok_stt_flat_fee_per_minute: Mapped[Decimal | None] = mapped_column(Numeric(10, 6), nullable=True)
+    byok_llm_flat_fee_per_minute: Mapped[Decimal | None] = mapped_column(Numeric(10, 6), nullable=True)
+    byok_analytics_flat_fee_per_call: Mapped[Decimal | None] = mapped_column(Numeric(10, 6), nullable=True)
 
 
 class CallLog(Base):

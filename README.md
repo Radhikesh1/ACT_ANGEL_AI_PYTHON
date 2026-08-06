@@ -229,9 +229,16 @@ ADMIN_PASSWORD=your-secure-password
 
 > **Note:** This list is not exhaustive — see `.env.example` for the full set (webhook secrets, Cloudinary, cost-tracking overrides, etc.), which is kept up to date as the source of truth.
 
+> **Note:** `OPENAI_API_KEY` and `SARVAM_API_KEY` here are optional last-resort fallbacks, not hard requirements — the service no longer refuses to start without them. The primary source is the global default a Super Admin configures on the WEB dashboard's Global Settings page (with optional org/assistant overrides); a deployment can run with neither of these set in `.env` as long as that's configured. If a call ends up with no key from any source, it's logged as a warning rather than crashing the service.
+
 ### BYOK Cost Overrides
 
-`BYOK_STT_FLAT_FEE_PER_MINUTE` / `BYOK_LLM_FLAT_FEE_PER_MINUTE` — the flat per-minute rate charged instead of the usual usage-based cost when an org supplies its own Sarvam/OpenAI key (see `services/cost_service.py`). These are also SAD-editable live from the WEB dashboard, with three levels of override — assistant, then org, then global (Global API Defaults → BYOK Flat Fees) — each taking priority over the level below it; the env var here is only the last-resort fallback when nothing's been configured on the dashboard at any level. `server.py` resolves the org id and pipecat assistant id once per call and passes both into `get_org_provider_key()` so the right tier is picked automatically.
+`BYOK_STT_FLAT_FEE_PER_MINUTE` / `BYOK_LLM_FLAT_FEE_PER_MINUTE` — the flat per-minute rate charged instead of the usual usage-based cost when an org supplies its own Sarvam/OpenAI key (see `services/cost_service.py`). Two levels of override, resolved by `server.py` on every call:
+
+1. The assistant's **active margin version** (WEB's `marginVersions` table, mirrored onto `assistant_extensions` for fast reads) — set from the "Update Margin" popup on the assistant edit page, right alongside the margin percentages. `server.py` queries `assistant_extensions` (a new `AssistantExtension` model in `database/models.py`, reading the default/public schema — everything else in this file lives in the `pipecat` schema) by `assistant_external_id` and uses its `byok_stt_flat_fee_per_minute`/`byok_llm_flat_fee_per_minute` if not null.
+2. Otherwise, the **global** rate (Global Settings → "BYOK Billing Rates" tab, still the `voice_provider_settings` mechanism with `organization_id=''`), via `get_org_provider_key(db, "", "byok_billing", ...)`.
+
+The env var here is only the last-resort fallback when neither is configured. Deliberately no org-level tier — a version's BYOK fields are either explicitly set for that one assistant or left null to inherit the global rate.
 
 ---
 
