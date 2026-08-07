@@ -71,13 +71,28 @@ def _llm_rates(model: str, llm_overrides: dict | None = None) -> tuple[float, fl
         if model.startswith(prefix):
             override = (llm_overrides or {}).get(prefix)
             if override:
-                return float(override.get("inputPer1M", inp)), float(override.get("outputPer1M", out))
+                # `.get(k, default)` only falls back when the key is absent —
+                # an explicit `null` in the JSONB (malformed data, manual DB
+                # edit) would otherwise reach float(None) and raise, silently
+                # dropping this call's finalization (caught by the caller's
+                # broad except). `if x is not None else default` covers both.
+                override_inp = override.get("inputPer1M")
+                override_out = override.get("outputPer1M")
+                return (
+                    float(override_inp) if override_inp is not None else inp,
+                    float(override_out) if override_out is not None else out,
+                )
             return inp, out
     # Unknown model — use gpt-4o-mini as safe default
     default_prefix, default_inp, default_out = _LLM_PRICING[1]
     override = (llm_overrides or {}).get(default_prefix)
     if override:
-        return float(override.get("inputPer1M", default_inp)), float(override.get("outputPer1M", default_out))
+        override_inp = override.get("inputPer1M")
+        override_out = override.get("outputPer1M")
+        return (
+            float(override_inp) if override_inp is not None else default_inp,
+            float(override_out) if override_out is not None else default_out,
+        )
     return default_inp, default_out
 
 

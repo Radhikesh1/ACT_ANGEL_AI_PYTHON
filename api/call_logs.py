@@ -20,6 +20,14 @@ def _serialize(c: CallLog) -> dict:
             cost_breakdown = json.loads(c.cost_breakdown)
         except Exception:
             pass
+        # `rates` is the internal cost basis (real $/unit LLM/STT/phone/
+        # platform pricing) — get_current_user() here only verifies the JWT
+        # belongs to some member of the org (no role claim is checked), so
+        # this endpoint has no way to gate it to admins only. Drop it rather
+        # than hand every org member the platform's internal pricing
+        # structure; the per-call dollar totals below are still returned.
+        if cost_breakdown and isinstance(cost_breakdown, dict):
+            cost_breakdown.pop("rates", None)
     return {
         "id": str(c.id),
         "organization_id": c.organization_id,
