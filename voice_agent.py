@@ -154,6 +154,7 @@ async def _finalize_call(
     used_own_openai: bool = False,
     byok_stt_rate: float | None = None,
     byok_llm_rate: float | None = None,
+    model_pricing: dict | None = None,
     metadata: dict | None = None,
 ):
     """Detached task: update (or insert) call log, fire webhooks, then save recording URL.
@@ -192,7 +193,7 @@ async def _finalize_call(
             if log_id is not None:
                 log = await db.get(CallLog, log_id)
                 if log:
-                    cost = calculate_cost(duration, chat_messages, llm_model, used_own_sarvam, used_own_openai, byok_stt_rate, byok_llm_rate)
+                    cost = calculate_cost(duration, chat_messages, llm_model, used_own_sarvam, used_own_openai, byok_stt_rate, byok_llm_rate, model_pricing)
                     log.duration = duration
                     log.chat = json.dumps(chat_messages)
                     log.call_status = call_status
@@ -211,7 +212,7 @@ async def _finalize_call(
                 else:
                     log_id = None  # row disappeared — fall through to INSERT
             if log_id is None:
-                cost = calculate_cost(duration, chat_messages, llm_model, used_own_sarvam, used_own_openai, byok_stt_rate, byok_llm_rate)
+                cost = calculate_cost(duration, chat_messages, llm_model, used_own_sarvam, used_own_openai, byok_stt_rate, byok_llm_rate, model_pricing)
                 log_id = uuid.uuid4()
                 db.add(CallLog(
                     id=log_id,
@@ -300,6 +301,7 @@ async def _finalize_call(
                 calculate_cost(
                     final_duration, chat_messages, llm_model,
                     used_own_sarvam, used_own_openai, byok_stt_rate, byok_llm_rate,
+                    model_pricing,
                 )
             ))
             raw_cost = {
@@ -392,6 +394,11 @@ async def run_bot(websocket_client):
 
     byok_stt_rate: float | None = _parse_rate(session.get("byok_stt_rate"))
     byok_llm_rate: float | None = _parse_rate(session.get("byok_llm_rate"))
+
+    # SAD-configurable actual-cost basis (Global Settings > Model Pricing
+    # tab) — None means no version has ever been activated, calculate_cost()
+    # then falls back to its own env-configured defaults.
+    model_pricing: dict | None = session.get("model_pricing") or None
 
     system_prompt: str | None = assistant_config.get("system_prompt")
     if not system_prompt:
@@ -688,5 +695,6 @@ async def run_bot(websocket_client):
             used_own_openai=used_own_openai,
             byok_stt_rate=byok_stt_rate,
             byok_llm_rate=byok_llm_rate,
+            model_pricing=model_pricing,
             metadata=customer_metadata,
         ))

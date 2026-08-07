@@ -8,7 +8,7 @@ from loguru import logger
 from sqlalchemy import select
 
 from database.connection import get_db
-from database.models import VoiceNumber, Assistant, AssistantExtension, BYOKRateVersion
+from database.models import VoiceNumber, Assistant, AssistantExtension, BYOKRateVersion, ModelPricingVersion
 from utils.plivo_creds import get_plivo_creds
 from utils.provider_creds import get_org_provider_key
 from migrations.runner import run_migrations
@@ -185,6 +185,18 @@ async def get_answer_xml(request: Request):
             else (str(active_byok_rate.llm_flat_fee_per_minute) if active_byok_rate else "")
         )
 
+        # Actual-cost basis (Global Settings > Model Pricing tab) — the
+        # per-model LLM rates plus STT/phone/platform per-minute rates that
+        # cost_service.calculate_cost() uses instead of its own env-configured
+        # defaults, when a version has been activated.
+        active_pricing_result = await db.execute(
+            select(ModelPricingVersion)
+            .where(ModelPricingVersion.is_active.is_(True))
+            .limit(1)
+        )
+        active_model_pricing = active_pricing_result.scalars().first()
+        model_pricing = active_model_pricing.rates if active_model_pricing else None
+
     call_sessions[call_uuid] = {
         "from_number": from_number,
         "to_number": to_number,
@@ -199,6 +211,7 @@ async def get_answer_xml(request: Request):
         "cloudinary_api_secret": cloudinary_api_secret,
         "byok_stt_rate": byok_stt_rate,
         "byok_llm_rate": byok_llm_rate,
+        "model_pricing": model_pricing,
     }
 
     logger.info(

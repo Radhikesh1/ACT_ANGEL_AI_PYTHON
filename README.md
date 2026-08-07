@@ -242,6 +242,16 @@ The env var here is only the last-resort fallback when neither is configured (i.
 
 On the WEB side, every `call_usages` row records which active `byok_rate_versions` row (if any) was used to bill that call's analytics component, via a `byok_rate_version_id` column — the same audit-trail convention as `margin_version_id`/`exchange_rate_version_id`.
 
+### Model Pricing Overrides
+
+Where BYOK Cost Overrides (above) is the flat rate charged *instead of* the usual cost formula, `services/cost_service.py`'s pricing table (`_LLM_PRICING`, `_SARVAM_PER_MIN`, `_PLIVO_PER_MIN`, `_PLATFORM_PER_MIN` — the env vars documented at the top of that file) *is* the usual cost formula: what OpenAI/Sarvam/Plivo actually charge, per model / per minute. Those env vars are still the last-resort fallback, but the primary source is now the same versioned mechanism as everything else — WEB's `model_pricing_versions` table (`public` schema, Global Settings → "Model Pricing" tab), read via a new `ModelPricingVersion` model (`database/models.py`).
+
+Unlike `BYOKRateVersion`/`AssistantExtension` (one column per rate), `ModelPricingVersion.rates` is a single JSONB blob holding the whole pricing table — `{"analytics": {...}, "llm": {"<model-prefix>": {"inputPer1M", "outputPer1M"}, ...}, "sttPerMinute", "phonePerMinute", "platformPerMinute"}` — since the model list can grow without a migration. `analytics` is WEB-only (its post-call analytics pricing) and is ignored on the Python side.
+
+`server.py`'s `/answerCall` fetches the active row once per call (same `.limit(1)` + `.scalars().first()` pattern as `BYOKRateVersion`, for the same reason) and stores its `rates` dict into `call_sessions[call_uuid]["model_pricing"]`. `voice_agent.py` reads it back out (`session.get("model_pricing")`) and threads it through to every `calculate_cost()` call site as a new `model_pricing` parameter.
+
+Inside `calculate_cost()`, resolution is **per-field**, not per-version: for the LLM table, `_llm_rates(model, llm_overrides)` checks `llm_overrides.get(<matched-prefix>)` first and falls back to that specific model's own env-loaded rate if absent — a version that only overrides `gpt-4o-mini` still lets every other model resolve from its env default. Same per-field fallback for `sttPerMinute`/`phonePerMinute`/`platformPerMinute` (each checked independently with `is not None`, so a version can override just one of the three). This means an incomplete or partially-filled-in version can never break a call — every field has its own fallback chain: DB version → env var → (nothing further needed, `_f()` always resolves to a literal at import time).
+
 ---
 
 ## Local Development Setup

@@ -123,6 +123,25 @@ class BYOKRateVersion(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
+class ModelPricingVersion(Base):
+    """WEB-side versioned GLOBAL model pricing (default/public schema) — the
+    actual-COST basis (what OpenAI/Sarvam/Plivo charge us), as opposed to
+    BYOKRateVersion above which is the CHARGE side (what we bill an org for
+    BYOK). `rates` holds the whole pricing table as one JSONB blob:
+      {
+        "analytics": {"inputPer1M": float, "outputPer1M": float},
+        "llm": {"<model-prefix>": {"inputPer1M": float, "outputPer1M": float}, ...},
+        "sttPerMinute": float, "phonePerMinute": float, "platformPerMinute": float
+      }
+    Only the row with is_active=True matters at read time. Read-only from
+    Python's perspective; server/routes/admin.ts is the only writer."""
+    __tablename__ = "model_pricing_versions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    rates: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
 class CallLog(Base):
     __tablename__ = "call_logs"
     __table_args__ = {"schema": "pipecat"}

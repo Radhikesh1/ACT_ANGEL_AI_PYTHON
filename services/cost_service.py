@@ -10,6 +10,8 @@ Model pricing env vars (per 1 M tokens):
   OPENAI_GPT5_MINI_INPUT_PER_1M / _OUTPUT_PER_1M   (gpt-5-mini)
   OPENAI_GPT5_INPUT_PER_1M / _OUTPUT_PER_1M         (gpt-5)
   OPENAI_GPT4O_INPUT_PER_1M / _OUTPUT_PER_1M        (gpt-4o)
+  OPENAI_GPT4_INPUT_PER_1M / _OUTPUT_PER_1M         (gpt-4, legacy)
+  OPENAI_GPT35_INPUT_PER_1M / _OUTPUT_PER_1M        (gpt-3.5, legacy)
 
 Other env vars:
   SARVAM_STT_COST_PER_MINUTE    (default 0.006)
@@ -39,9 +41,11 @@ _LLM_PRICING: list[tuple[str, float, float]] = [
     ("gpt-5-mini",  _f("OPENAI_GPT5_MINI_INPUT_PER_1M",  "0.250"), _f("OPENAI_GPT5_MINI_OUTPUT_PER_1M",  "2.000")),
     ("gpt-5",       _f("OPENAI_GPT5_INPUT_PER_1M",       "1.250"), _f("OPENAI_GPT5_OUTPUT_PER_1M",       "10.000")),
     ("gpt-4o",      _f("OPENAI_GPT4O_INPUT_PER_1M",      "2.500"), _f("OPENAI_GPT4O_OUTPUT_PER_1M",      "10.000")),
-    # Legacy / fallback entries
-    ("gpt-4",       30.0, 60.0),
-    ("gpt-3.5",      0.5,  1.5),
+    # Legacy entries — no assistant should be configured with these anymore,
+    # but the rates stay env-configurable for consistency with the rest of
+    # this table rather than being frozen in code.
+    ("gpt-4",       _f("OPENAI_GPT4_INPUT_PER_1M",       "30.000"), _f("OPENAI_GPT4_OUTPUT_PER_1M",       "60.000")),
+    ("gpt-3.5",     _f("OPENAI_GPT35_INPUT_PER_1M",       "0.500"), _f("OPENAI_GPT35_OUTPUT_PER_1M",       "1.500")),
 ]
 
 _SARVAM_PER_MIN:   float = _f("SARVAM_STT_COST_PER_MINUTE",  "0.006")
@@ -55,13 +59,26 @@ _BYOK_STT_FLAT_PER_MIN: float = _f("BYOK_STT_FLAT_FEE_PER_MINUTE", "0.001")
 _BYOK_LLM_FLAT_PER_MIN: float = _f("BYOK_LLM_FLAT_FEE_PER_MINUTE", "0.002")
 
 
-def _llm_rates(model: str) -> tuple[float, float]:
-    """Return (input_per_1M, output_per_1M) for the given model string."""
+def _llm_rates(model: str, llm_overrides: dict | None = None) -> tuple[float, float]:
+    """Return (input_per_1M, output_per_1M) for the given model string.
+
+    llm_overrides: optional dict keyed by the same model-prefix strings as
+    _LLM_PRICING (e.g. WEB's active modelPricingVersions row, Global Settings
+    > Model Pricing tab), each value {"inputPer1M": float, "outputPer1M": float}.
+    A prefix present in the override wins over its env-configured default.
+    """
     for prefix, inp, out in _LLM_PRICING:
         if model.startswith(prefix):
+            override = (llm_overrides or {}).get(prefix)
+            if override:
+                return float(override.get("inputPer1M", inp)), float(override.get("outputPer1M", out))
             return inp, out
     # Unknown model — use gpt-4o-mini as safe default
-    return _LLM_PRICING[1][1], _LLM_PRICING[1][2]
+    default_prefix, default_inp, default_out = _LLM_PRICING[1]
+    override = (llm_overrides or {}).get(default_prefix)
+    if override:
+        return float(override.get("inputPer1M", default_inp)), float(override.get("outputPer1M", default_out))
+    return default_inp, default_out
 
 
 def calculate_cost(
@@ -72,6 +89,7 @@ def calculate_cost(
     used_own_openai: bool = False,
     byok_stt_rate: float | None = None,
     byok_llm_rate: float | None = None,
+    model_pricing: dict | None = None,
 ) -> dict:
     """
     Returns a cost breakdown dict:
@@ -96,9 +114,34 @@ def calculate_cost(
     byok_stt_rate/byok_llm_rate: SAD-configurable overrides for the flat BYOK
     rate (per minute), read from voice_provider_settings by the caller. Pass
     None (the default) to fall back to the env-configured _BYOK_*_FLAT_PER_MIN.
+
+    model_pricing: SAD-configurable override for the actual-cost basis (WEB's
+    Global Settings > Model Pricing tab, versioned in `model_pricing_versions`
+    — read fresh per-call by the caller). Pass None (the default) to fall back
+    to the env-configured module-level rates below. Shape:
+    {"llm": {"<model-prefix>": {"inputPer1M", "outputPer1M"}, ...},
+     "sttPerMinute": float, "phonePerMinute": float, "platformPerMinute": float}
+    — an "analytics" key, if present, is ignored here; that's WEB-only.
     """
     stt_flat_rate = byok_stt_rate if byok_stt_rate is not None else _BYOK_STT_FLAT_PER_MIN
     llm_flat_rate = byok_llm_rate if byok_llm_rate is not None else _BYOK_LLM_FLAT_PER_MIN
+
+    llm_overrides = (model_pricing or {}).get("llm")
+    sarvam_per_min = (
+        float(model_pricing["sttPerMinute"])
+        if model_pricing and model_pricing.get("sttPerMinute") is not None
+        else _SARVAM_PER_MIN
+    )
+    plivo_per_min = (
+        float(model_pricing["phonePerMinute"])
+        if model_pricing and model_pricing.get("phonePerMinute") is not None
+        else _PLIVO_PER_MIN
+    )
+    platform_per_min = (
+        float(model_pricing["platformPerMinute"])
+        if model_pricing and model_pricing.get("platformPerMinute") is not None
+        else _PLATFORM_PER_MIN
+    )
     # ── Token estimation ──────────────────────────────────────────────────────
     # Conservative ratio of 3.5 chars/token to account for multilingual content
     # (Hindi, regional languages) which tokenise more densely than English.
@@ -121,7 +164,7 @@ def calculate_cost(
     duration_min = duration_seconds / 60.0
 
     # ── LLM cost ──────────────────────────────────────────────────────────────
-    inp_rate, out_rate = _llm_rates(llm_model)
+    inp_rate, out_rate = _llm_rates(llm_model, llm_overrides)
     if used_own_openai:
         llm_usd = duration_min * llm_flat_rate
     else:
@@ -131,9 +174,9 @@ def calculate_cost(
         )
 
     # ── Duration-based costs ──────────────────────────────────────────────────
-    stt_usd      = duration_min * (stt_flat_rate if used_own_sarvam else _SARVAM_PER_MIN)
-    phone_usd    = duration_min * _PLIVO_PER_MIN
-    platform_usd = duration_min * _PLATFORM_PER_MIN
+    stt_usd      = duration_min * (stt_flat_rate if used_own_sarvam else sarvam_per_min)
+    phone_usd    = duration_min * plivo_per_min
+    platform_usd = duration_min * platform_per_min
 
     total_usd = llm_usd + stt_usd + phone_usd + platform_usd
 
@@ -152,9 +195,9 @@ def calculate_cost(
         "rates": {
             "llm_input_per_1m":  inp_rate,
             "llm_output_per_1m": out_rate,
-            "stt_per_min":       stt_flat_rate if used_own_sarvam else _SARVAM_PER_MIN,
-            "phone_per_min":     _PLIVO_PER_MIN,
-            "platform_per_min":  _PLATFORM_PER_MIN,
+            "stt_per_min":       stt_flat_rate if used_own_sarvam else sarvam_per_min,
+            "phone_per_min":     plivo_per_min,
+            "platform_per_min":  platform_per_min,
         },
         "model":        llm_model,
         "duration_min": round(duration_min, 4),
