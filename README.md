@@ -233,12 +233,14 @@ ADMIN_PASSWORD=your-secure-password
 
 ### BYOK Cost Overrides
 
-`BYOK_STT_FLAT_FEE_PER_MINUTE` / `BYOK_LLM_FLAT_FEE_PER_MINUTE` — the flat per-minute rate charged instead of the usual usage-based cost when an org supplies its own Sarvam/OpenAI key (see `services/cost_service.py`). Two levels of override, resolved by `server.py` on every call:
+`BYOK_STT_FLAT_FEE_PER_MINUTE` / `BYOK_LLM_FLAT_FEE_PER_MINUTE` — the flat per-minute rate charged instead of the usual usage-based cost when an org supplies its own Sarvam/OpenAI key (see `services/cost_service.py`). Two levels of override, both versioned (WEB tables, `public` schema), resolved by `server.py` on every call:
 
-1. The assistant's **active margin version** (WEB's `marginVersions` table, mirrored onto `assistant_extensions` for fast reads) — set from the "Update Margin" popup on the assistant edit page, right alongside the margin percentages. `server.py` queries `assistant_extensions` (a new `AssistantExtension` model in `database/models.py`, reading the default/public schema — everything else in this file lives in the `pipecat` schema) by `assistant_external_id` and uses its `byok_stt_flat_fee_per_minute`/`byok_llm_flat_fee_per_minute` if not null.
-2. Otherwise, the **global** rate (Global Settings → "BYOK Billing Rates" tab, still the `voice_provider_settings` mechanism with `organization_id=''`), via `get_org_provider_key(db, "", "byok_billing", ...)`.
+1. The assistant's **active margin version** (WEB's `marginVersions` table, mirrored onto `assistant_extensions` for fast reads) — set from the "Update Margin" popup on the assistant edit page, right alongside the margin percentages. `server.py` queries `assistant_extensions` (an `AssistantExtension` model in `database/models.py`) by `assistant_external_id` and uses its `byok_stt_flat_fee_per_minute`/`byok_llm_flat_fee_per_minute` if not null.
+2. Otherwise, the **active** row of WEB's `byok_rate_versions` table (Global Settings → "BYOK Billing Rates" tab — versioned exactly like Exchange Rate Versions: a history of versions, one `is_active` at a time), via a new `BYOKRateVersion` model queried with `is_active.is_(True)` (`.limit(1)` + `.scalars().first()`, not `scalar_one_or_none()` — tolerates more than one active row without raising instead of 500ing an inbound call on that edge case).
 
-The env var here is only the last-resort fallback when neither is configured. Deliberately no org-level tier — a version's BYOK fields are either explicitly set for that one assistant or left null to inherit the global rate.
+The env var here is only the last-resort fallback when neither is configured (i.e. no assistant override AND no BYOK rate version has ever been activated). Deliberately no org-level tier — a margin version's BYOK fields are either explicitly set for that one assistant or left null to inherit the active global version's rate.
+
+On the WEB side, every `call_usages` row records which active `byok_rate_versions` row (if any) was used to bill that call's analytics component, via a `byok_rate_version_id` column — the same audit-trail convention as `margin_version_id`/`exchange_rate_version_id`.
 
 ---
 

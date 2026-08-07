@@ -8,7 +8,7 @@ from loguru import logger
 from sqlalchemy import select
 
 from database.connection import get_db
-from database.models import VoiceNumber, Assistant, AssistantExtension
+from database.models import VoiceNumber, Assistant, AssistantExtension, BYOKRateVersion
 from utils.plivo_creds import get_plivo_creds
 from utils.provider_creds import get_org_provider_key
 from migrations.runner import run_migrations
@@ -153,10 +153,11 @@ async def get_answer_xml(request: Request):
 
         # BYOK flat-fee rates — versioned per-assistant (mirrors the active
         # marginVersion, set from the WEB "Update Margin" popup), falling
-        # back to the global rate (Global API Defaults page) whenever the
-        # assistant's active version left a field unset (NULL). Empty string
-        # means "not configured anywhere", voice_agent.py falls back to its
-        # own env-configured defaults.
+        # back to the active global BYOK rate version (Global Settings →
+        # BYOK Billing Rates tab, versioned the same way exchange rates are)
+        # whenever the assistant's active version left a field unset (NULL).
+        # Empty string means "not configured anywhere", voice_agent.py falls
+        # back to its own env-configured defaults.
         assistant_ext: AssistantExtension | None = None
         if assistant_config:
             ext_result = await db.execute(
@@ -166,15 +167,22 @@ async def get_answer_xml(request: Request):
             )
             assistant_ext = ext_result.scalar_one_or_none()
 
+        active_byok_result = await db.execute(
+            select(BYOKRateVersion)
+            .where(BYOKRateVersion.is_active.is_(True))
+            .limit(1)
+        )
+        active_byok_rate = active_byok_result.scalars().first()
+
         byok_stt_rate = (
             str(assistant_ext.byok_stt_flat_fee_per_minute)
             if assistant_ext and assistant_ext.byok_stt_flat_fee_per_minute is not None
-            else await get_org_provider_key(db, "", "byok_billing", "stt_flat_fee_per_minute")
+            else (str(active_byok_rate.stt_flat_fee_per_minute) if active_byok_rate else "")
         )
         byok_llm_rate = (
             str(assistant_ext.byok_llm_flat_fee_per_minute)
             if assistant_ext and assistant_ext.byok_llm_flat_fee_per_minute is not None
-            else await get_org_provider_key(db, "", "byok_billing", "llm_flat_fee_per_minute")
+            else (str(active_byok_rate.llm_flat_fee_per_minute) if active_byok_rate else "")
         )
 
     call_sessions[call_uuid] = {

@@ -76,10 +76,13 @@ class VoiceNumber(Base):
 
 
 class VoiceProviderSetting(Base):
-    """Per-org/per-assistant Plivo/Sarvam/OpenAI/Cloudinary/BYOK-billing settings.
+    """Per-org/per-assistant Plivo/Sarvam/OpenAI/Cloudinary credential settings.
     organization_id='' stores global defaults; assistant_id=NULL means the row
     isn't assistant-scoped. Resolution priority: assistant -> org -> global.
-    Rows are only ever written by Node (PATCH /api/voice/settings/:provider)."""
+    Rows are only ever written by Node (PATCH /api/voice/settings/:provider).
+    Note: BYOK billing rates used to live here too (provider='byok_billing')
+    but have since moved to versioned tables — see BYOKRateVersion (global)
+    and AssistantExtension's byok_*_flat_fee_* columns (per-assistant)."""
     __tablename__ = "voice_provider_settings"
     __table_args__ = {"schema": "pipecat"}
 
@@ -103,6 +106,21 @@ class AssistantExtension(Base):
     byok_stt_flat_fee_per_minute: Mapped[Decimal | None] = mapped_column(Numeric(10, 6), nullable=True)
     byok_llm_flat_fee_per_minute: Mapped[Decimal | None] = mapped_column(Numeric(10, 6), nullable=True)
     byok_analytics_flat_fee_per_call: Mapped[Decimal | None] = mapped_column(Numeric(10, 6), nullable=True)
+
+
+class BYOKRateVersion(Base):
+    """WEB-side versioned GLOBAL BYOK flat-fee rates (default/public schema).
+    Only the row with is_active=True matters at read time — mirrors how
+    ExchangeRateVersion-style versioning works on the WEB side, just for
+    BYOK rates instead of currency rates. Read-only from Python's
+    perspective; server/routes/admin.ts is the only writer."""
+    __tablename__ = "byok_rate_versions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    stt_flat_fee_per_minute: Mapped[Decimal] = mapped_column(Numeric(10, 6), nullable=False)
+    llm_flat_fee_per_minute: Mapped[Decimal] = mapped_column(Numeric(10, 6), nullable=False)
+    analytics_flat_fee_per_call: Mapped[Decimal] = mapped_column(Numeric(10, 6), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
 class CallLog(Base):
