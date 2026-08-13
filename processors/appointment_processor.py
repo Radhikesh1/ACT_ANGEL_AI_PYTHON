@@ -35,12 +35,16 @@ class AppointmentProcessor(FrameProcessor):
         self,
         call_id,
         customer_number,
+        organization_id=None,
+        agent_id=None,
     ):
 
         super().__init__()
 
         self.call_id = call_id
         self.customer_number = customer_number
+        self.organization_id = organization_id
+        self.agent_id = agent_id
 
     async def process_frame(
         self,
@@ -205,6 +209,10 @@ class AppointmentProcessor(FrameProcessor):
                 from_number=self.customer_number,
 
                 session_id=self.call_id,
+
+                organization_id=self.organization_id,
+
+                agent_id=self.agent_id,
             )
 
             conversation_states.pop(

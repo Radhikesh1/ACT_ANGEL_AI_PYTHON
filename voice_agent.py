@@ -599,6 +599,8 @@ async def run_bot(websocket_client):
     appointment_processor = AppointmentProcessor(
         call_id=call_id,
         customer_number=customer_number,
+        organization_id=organization_id,
+        agent_id=agent_id,
     )
 
     # -----------------------------------
