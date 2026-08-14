@@ -26,7 +26,11 @@ async def _table_exists(conn: AsyncConnection, table: str, schema: str = "public
         "  WHERE table_schema = :s AND table_name = :t"
         ")"
     ), {"s": schema, "t": table})
-    return result.scalar()
+    # .scalar() is typed Any | None (a raw NULL is possible in general), but
+    # this query is a bare `SELECT EXISTS(...)` which Postgres always
+    # evaluates to true/false, never NULL — bool() makes that guarantee
+    # explicit to the type checker instead of suppressing the mismatch.
+    return bool(result.scalar())
 
 
 async def _column_exists(conn: AsyncConnection, table: str, column: str, schema: str = "public") -> bool:
@@ -37,7 +41,18 @@ async def _column_exists(conn: AsyncConnection, table: str, column: str, schema:
         "  AND table_name = :t AND column_name = :c"
         ")"
     ), {"s": schema, "t": table, "c": column})
-    return result.scalar()
+    return bool(result.scalar())
+
+
+async def _constraint_exists(conn: AsyncConnection, table: str, constraint: str, schema: str = "public") -> bool:
+    result = await conn.execute(text(
+        "SELECT EXISTS ("
+        "  SELECT FROM information_schema.table_constraints"
+        "  WHERE table_schema = :s"
+        "  AND table_name = :t AND constraint_name = :c"
+        ")"
+    ), {"s": schema, "t": table, "c": constraint})
+    return bool(result.scalar())
 
 
 # ── Tracking table ────────────────────────────────────────────────────────────
@@ -496,6 +511,146 @@ async def migration_015_timestamp_with_timezone(conn):
         ))
 
 
+async def migration_016_add_voice_provider_settings_id(conn: AsyncConnection):
+    """
+    Add id/assistant_id columns to pipecat.voice_provider_settings.
+
+    This table was created by migration_013 with ONLY (organization_id,
+    provider, key, value) — a composite PRIMARY KEY on (organization_id,
+    provider, key), no id, no assistant_id. Both the SQLAlchemy model
+    (database/models.py's VoiceProviderSetting) and the Node WEB mirror
+    (shared/schema-pipecat.ts) were later updated to add `id` (declared as
+    the ORM primary key) and `assistant_id` (for the assistant → org →
+    global BYOK-key resolution tier) — but no migration ever added them to
+    the real table. Any full-entity SELECT (SQLAlchemy `select(VoiceProviderSetting)`,
+    or WEB's `db.select({id: voiceProviderSettings.id})` in upsertSetting)
+    fails outright against a table missing these columns.
+
+    Deliberately NOT touching the existing composite PRIMARY KEY here — that
+    would be a separate, higher-risk change (existing rows/constraints,
+    potential app-level assumptions) and is out of scope for "make the
+    columns the code already expects actually exist". Callers that upsert by
+    id (WEB's upsertSetting) work correctly once id exists and is unique,
+    regardless of what the table's actual PRIMARY KEY is.
+
+    NOTE: the composite PK (organization_id, provider, key) has no
+    assistant_id component, so it cannot hold both an org-level row and an
+    assistant-level row for the same (organization_id, provider, key) —
+    inserting the second would violate that PK. Widened in
+    migration_017_widen_voice_provider_settings_key (kept as a separate,
+    explicitly-requested migration rather than folded in here).
+    """
+    if not await _table_exists(conn, "voice_provider_settings", "pipecat"):
+        logger.info("[Migration 016] pipecat.voice_provider_settings not found — skipped")
+        return
+
+    if not await _column_exists(conn, "voice_provider_settings", "id", "pipecat"):
+        # VARCHAR, not UUID — matches both consumers exactly: the SQLAlchemy
+        # model declares `id: Mapped[str] = mapped_column(String, primary_key=True)`,
+        # and WEB's Drizzle mirror declares `varchar("id")`. Neither expects
+        # a native uuid type back from a query, just a string that happens
+        # to look like one.
+        await conn.execute(text(
+            "ALTER TABLE pipecat.voice_provider_settings "
+            "ADD COLUMN id VARCHAR NOT NULL DEFAULT gen_random_uuid()::text"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE pipecat.voice_provider_settings ADD CONSTRAINT "
+            "voice_provider_settings_id_unique UNIQUE (id)"
+        ))
+        logger.info("[Migration 016] Added pipecat.voice_provider_settings.id column (+ unique constraint)")
+    else:
+        logger.info("[Migration 016] pipecat.voice_provider_settings.id already exists — skipped")
+
+    if not await _column_exists(conn, "voice_provider_settings", "assistant_id", "pipecat"):
+        await conn.execute(text(
+            "ALTER TABLE pipecat.voice_provider_settings ADD COLUMN assistant_id UUID"
+        ))
+        logger.info("[Migration 016] Added pipecat.voice_provider_settings.assistant_id column")
+    else:
+        logger.info("[Migration 016] pipecat.voice_provider_settings.assistant_id already exists — skipped")
+
+
+async def migration_017_widen_voice_provider_settings_key(conn: AsyncConnection):
+    """
+    Widen pipecat.voice_provider_settings' uniqueness to include assistant_id.
+
+    migration_013 created this table with PRIMARY KEY (organization_id,
+    provider, key) — no assistant_id component. Once the assistant -> org ->
+    global BYOK-key resolution tier was added (the assistant_id column,
+    added by migration_016), that PK became too narrow: it can't hold BOTH
+    an org-level row (assistant_id NULL) and an assistant-scoped row for the
+    SAME (organization_id, provider, key) — inserting the second would
+    violate the PK. Flagged in migration_016's own docstring as a deferred,
+    explicit-sign-off change; this is that follow-up, requested directly.
+
+    Replaces the composite PK with:
+      - PRIMARY KEY on `id` (added by migration_016)
+      - the exact unique index WEB's own Drizzle mirror already declares —
+        shared/schema-pipecat.ts's `voice_provider_settings_scope_idx`,
+        which COALESCEs assistant_id to a sentinel UUID before comparing
+        (Postgres treats NULL != NULL in a plain unique index, so two
+        org-level rows for the same key would NOT collide without this).
+        That index was declared in WEB's schema but never actually reached
+        the real table, since this schema is Python-migration-owned and
+        drizzle-kit never runs DDL against it — this migration is what
+        finally makes the real table match what WEB's mirror describes.
+
+    Safe against existing data: the OLD PK already guaranteed at most one
+    row per (organization_id, provider, key) with NO assistant_id
+    dimension, and assistant_id is a column migration_016 just added (NULL
+    on every pre-existing row) — so the new index can never find a
+    pre-existing duplicate.
+    """
+    if not await _table_exists(conn, "voice_provider_settings", "pipecat"):
+        logger.info("[Migration 017] pipecat.voice_provider_settings not found — skipped")
+        return
+
+    # The ORIGINAL composite PK, Postgres' default auto-generated name for
+    # an unnamed `PRIMARY KEY (...)` in a CREATE TABLE. Named distinctly
+    # from the new id-based PK below so this check stays a true no-op on
+    # every run after the first, instead of dropping-and-recreating forever.
+    if await _constraint_exists(conn, "voice_provider_settings", "voice_provider_settings_pkey", "pipecat"):
+        await conn.execute(text(
+            "ALTER TABLE pipecat.voice_provider_settings DROP CONSTRAINT voice_provider_settings_pkey"
+        ))
+        logger.info("[Migration 017] Dropped old composite PRIMARY KEY (organization_id, provider, key)")
+    else:
+        logger.info("[Migration 017] Old composite PRIMARY KEY already gone — skipped")
+
+    # Superseded by the PK below (a PRIMARY KEY already implies UNIQUE) —
+    # drop it first so there's no redundant constraint left behind.
+    if await _constraint_exists(conn, "voice_provider_settings", "voice_provider_settings_id_unique", "pipecat"):
+        await conn.execute(text(
+            "ALTER TABLE pipecat.voice_provider_settings DROP CONSTRAINT voice_provider_settings_id_unique"
+        ))
+
+    if not await _constraint_exists(conn, "voice_provider_settings", "voice_provider_settings_id_pkey", "pipecat"):
+        await conn.execute(text(
+            "ALTER TABLE pipecat.voice_provider_settings "
+            "ADD CONSTRAINT voice_provider_settings_id_pkey PRIMARY KEY (id)"
+        ))
+        logger.info("[Migration 017] Added PRIMARY KEY (id)")
+    else:
+        logger.info("[Migration 017] PRIMARY KEY (id) already present — skipped")
+
+    # Matches shared/schema-pipecat.ts's `voice_provider_settings_scope_idx`
+    # exactly — same name, same COALESCE sentinel — so WEB's Drizzle mirror
+    # and the real table agree.
+    await conn.execute(text(
+        "CREATE UNIQUE INDEX IF NOT EXISTS voice_provider_settings_scope_idx "
+        "ON pipecat.voice_provider_settings ("
+        "  organization_id,"
+        "  COALESCE(assistant_id, '00000000-0000-0000-0000-000000000000'::uuid),"
+        "  provider,"
+        "  key"
+        ")"
+    ))
+    logger.info("[Migration 017] Ensured voice_provider_settings_scope_idx (org+assistant+provider+key)")
+
+
+# ── Registry — add new migrations here in order ───────────────────────────────
+
 MIGRATIONS = [
     ("001_create_assistants",           migration_001_create_assistants),
     ("002_create_plivo_numbers",        migration_002_create_plivo_numbers),
@@ -512,6 +667,8 @@ MIGRATIONS = [
     ("013_setup_pipecat_schema",        migration_013_setup_pipecat_schema),
     ("014_add_dynamic_config",          migration_014_add_dynamic_config),
     ("015_timestamp_with_timezone",     migration_015_timestamp_with_timezone),
+    ("016_add_voice_provider_settings_id", migration_016_add_voice_provider_settings_id),
+    ("017_widen_voice_provider_settings_key", migration_017_widen_voice_provider_settings_key),
 ]
 
 
