@@ -37,6 +37,7 @@ class AppointmentProcessor(FrameProcessor):
         customer_number,
         organization_id=None,
         agent_id=None,
+        assistant_number=None,
     ):
 
         super().__init__()
@@ -45,6 +46,7 @@ class AppointmentProcessor(FrameProcessor):
         self.customer_number = customer_number
         self.organization_id = organization_id
         self.agent_id = agent_id
+        self.assistant_number = assistant_number
 
     async def process_frame(
         self,
@@ -213,6 +215,8 @@ class AppointmentProcessor(FrameProcessor):
                 organization_id=self.organization_id,
 
                 agent_id=self.agent_id,
+
+                assistant_number=self.assistant_number,
             )
 
             conversation_states.pop(

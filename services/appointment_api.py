@@ -11,6 +11,7 @@ async def create_appointment_api(
     session_id,
     organization_id=None,
     agent_id=None,
+    assistant_number=None,
 ):
     api_url = os.getenv("APPOINTMENT_API_URL") or ""
     # Falls back to the static env assistant id only if the caller didn't
@@ -18,26 +19,32 @@ async def create_appointment_api(
     # this was the ONLY source, so every appointment across every org/assistant
     # was misattributed to whichever single assistant this env var named.
     assistant_id = agent_id or os.getenv("ASSISTANT_ID") or ""
-    from_number_env = os.getenv("FROM_NUMBER") or ""
+    # Same fallback pattern — prefer the real per-call number (the number
+    # actually dialed for this call) over the static env var, which named
+    # one single number for every org/assistant regardless of which one
+    # actually took the call.
+    resolved_assistant_number = assistant_number or os.getenv("FROM_NUMBER") or ""
     ingest_secret = os.getenv("ACTANGEL_INGEST_SECRET") or ""
 
     if not api_url:
         raise ValueError("APPOINTMENT_API_URL missing — add it to .env")
     if not assistant_id:
         raise ValueError("ASSISTANT_ID missing — add it to .env")
-    if not from_number_env:
+    if not resolved_assistant_number:
         raise ValueError("FROM_NUMBER missing — add it to .env")
 
+    # WEB's /api/webhook/call-appointment (ingestAppointment) requires these
+    # exact field names — selectedOption is "siteVisit" for a site visit,
+    # "callback" otherwise (appointment_processor.py only ever classifies
+    # these two), and scheduleDateTime/customerNumber/assistantNumber replace
+    # this payload's older datetime/to_number/(missing) shape, which never
+    # matched what that endpoint actually reads.
     payload = {
-        "tool": (
-            "site_visit_tool"
-            if appointment_type == "site_visit"
-            else "create_appointment"
-        ),
-        "datetime": appointment_datetime,
-        "to_number": from_number,
+        "customerNumber": from_number,
+        "assistantNumber": resolved_assistant_number,
+        "selectedOption": "siteVisit" if appointment_type == "site_visit" else "callback",
+        "scheduleDateTime": appointment_datetime,
         "assistantId": assistant_id,
-        "from_number": from_number_env,
         "session_id": session_id,
         # Lets the WEB side scope its assistant lookup to this org instead of
         # matching assistantId (only unique WITHIN an org) globally — without

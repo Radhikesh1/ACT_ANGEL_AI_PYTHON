@@ -601,6 +601,7 @@ async def run_bot(websocket_client):
         customer_number=customer_number,
         organization_id=organization_id,
         agent_id=agent_id,
+        assistant_number=to_number,
     )
 
     # -----------------------------------
