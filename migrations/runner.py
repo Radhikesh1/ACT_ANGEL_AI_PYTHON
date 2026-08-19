@@ -649,6 +649,63 @@ async def migration_017_widen_voice_provider_settings_key(conn: AsyncConnection)
     logger.info("[Migration 017] Ensured voice_provider_settings_scope_idx (org+assistant+provider+key)")
 
 
+async def migration_018_create_whatsapp_numbers(conn: AsyncConnection):
+    """Create pipecat.whatsapp_numbers — maps a Cloud API phone_number_id to an org/assistant."""
+    if await _table_exists(conn, "whatsapp_numbers", "pipecat"):
+        logger.info("[Migration 018] pipecat.whatsapp_numbers already exists — skipped")
+        return
+
+    await conn.execute(text("CREATE SCHEMA IF NOT EXISTS pipecat"))
+    await conn.execute(text("""
+        CREATE TABLE pipecat.whatsapp_numbers (
+            id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            organization_id      VARCHAR(36),
+            phone_number_id      VARCHAR(50) UNIQUE NOT NULL,
+            display_phone_number VARCHAR(30) DEFAULT '',
+            waba_id              VARCHAR(50) DEFAULT '',
+            assistant_id         UUID,
+            webhook_configured   BOOLEAN DEFAULT FALSE,
+            created_at           TIMESTAMPTZ DEFAULT NOW(),
+            updated_at           TIMESTAMPTZ DEFAULT NOW()
+        )
+    """))
+    await conn.execute(text(
+        "CREATE INDEX idx_whatsapp_numbers_org ON pipecat.whatsapp_numbers(organization_id)"
+    ))
+    logger.info("[Migration 018] Created pipecat.whatsapp_numbers")
+
+
+async def migration_019_create_whatsapp_message_logs(conn: AsyncConnection):
+    """Create pipecat.whatsapp_message_logs — audit trail + webhook-redelivery dedupe."""
+    if await _table_exists(conn, "whatsapp_message_logs", "pipecat"):
+        logger.info("[Migration 019] pipecat.whatsapp_message_logs already exists — skipped")
+        return
+
+    await conn.execute(text("""
+        CREATE TABLE pipecat.whatsapp_message_logs (
+            id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            organization_id  VARCHAR(36),
+            assistant_id     UUID,
+            wa_id            VARCHAR(30) NOT NULL,
+            phone_number_id  VARCHAR(50) DEFAULT '',
+            wa_message_id    VARCHAR(100) UNIQUE,
+            direction        VARCHAR(10) NOT NULL,
+            message_type     VARCHAR(20) NOT NULL,
+            content          TEXT,
+            status           VARCHAR(20) DEFAULT 'received',
+            error_message    TEXT,
+            created_at       TIMESTAMPTZ DEFAULT NOW()
+        )
+    """))
+    await conn.execute(text(
+        "CREATE INDEX idx_whatsapp_message_logs_org ON pipecat.whatsapp_message_logs(organization_id)"
+    ))
+    await conn.execute(text(
+        "CREATE INDEX idx_whatsapp_message_logs_wa_id ON pipecat.whatsapp_message_logs(wa_id)"
+    ))
+    logger.info("[Migration 019] Created pipecat.whatsapp_message_logs")
+
+
 # ── Registry — add new migrations here in order ───────────────────────────────
 
 MIGRATIONS = [
@@ -669,6 +726,8 @@ MIGRATIONS = [
     ("015_timestamp_with_timezone",     migration_015_timestamp_with_timezone),
     ("016_add_voice_provider_settings_id", migration_016_add_voice_provider_settings_id),
     ("017_widen_voice_provider_settings_key", migration_017_widen_voice_provider_settings_key),
+    ("018_create_whatsapp_numbers",      migration_018_create_whatsapp_numbers),
+    ("019_create_whatsapp_message_logs", migration_019_create_whatsapp_message_logs),
 ]
 
 

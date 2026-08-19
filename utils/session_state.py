@@ -203,3 +203,18 @@ class RedisDict:
 conversation_states = RedisDict(_redis_client, "conv:")
 call_sessions       = RedisDict(_redis_client, "sess:")
 language_sessions   = RedisDict(_redis_client, "lang:")
+whatsapp_conversations = RedisDict(_redis_client, "wa:")
+
+WHATSAPP_MEMORY_TURNS = 10  # last N {role, content} messages kept per wa_id
+
+
+def append_whatsapp_turn(wa_id: str, role: str, content: str) -> None:
+    """Append one turn to a contact's rolling WhatsApp conversation buffer,
+    capped at WHATSAPP_MEMORY_TURNS — mirrors n8n's memoryBufferWindow node."""
+    history: list = whatsapp_conversations.get(wa_id, [])
+    history.append({"role": role, "content": content})
+    whatsapp_conversations[wa_id] = history[-WHATSAPP_MEMORY_TURNS:]
+
+
+def get_whatsapp_history(wa_id: str) -> list:
+    return whatsapp_conversations.get(wa_id, [])

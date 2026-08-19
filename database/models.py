@@ -142,6 +142,51 @@ class ModelPricingVersion(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
+class WhatsAppNumber(Base):
+    """Maps a WhatsApp Cloud API phone_number_id (Meta's routing key, present
+    on every inbound webhook payload) to an org/assistant — same role
+    VoiceNumber plays for Plivo numbers."""
+    __tablename__ = "whatsapp_numbers"
+    __table_args__ = {"schema": "pipecat"}
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    phone_number_id: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
+    display_phone_number: Mapped[str] = mapped_column(String(30), default="")
+    waba_id: Mapped[str] = mapped_column(String(50), default="")
+    # Soft FK — no DB constraint, mirrors VoiceNumber.assistant_id; references pipecat.assistants.id
+    assistant_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    webhook_configured: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
+    )
+
+
+class WhatsAppMessageLog(Base):
+    """Inbound/outbound WhatsApp message audit trail. The unique constraint on
+    wa_message_id doubles as a dedupe guard against Meta's webhook redelivery."""
+    __tablename__ = "whatsapp_message_logs"
+    __table_args__ = {"schema": "pipecat"}
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    assistant_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    wa_id: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    phone_number_id: Mapped[str] = mapped_column(String(50), default="")
+    wa_message_id: Mapped[str | None] = mapped_column(String(100), unique=True, nullable=True)
+    direction: Mapped[str] = mapped_column(String(10), nullable=False)
+    message_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="received")
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
 class CallLog(Base):
     __tablename__ = "call_logs"
     __table_args__ = {"schema": "pipecat"}

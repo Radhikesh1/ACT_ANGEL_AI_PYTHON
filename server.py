@@ -19,6 +19,7 @@ from voice_agent import run_bot
 from api.auth import router as auth_router
 from api.assistants import router as assistants_router
 from api.call_logs import router as call_logs_router
+from api.whatsapp import router as whatsapp_router
 
 load_dotenv()
 
@@ -80,6 +81,7 @@ async def startup():
 app.include_router(auth_router, prefix="/api")
 app.include_router(assistants_router, prefix="/api")
 app.include_router(call_logs_router, prefix="/api")
+app.include_router(whatsapp_router, prefix="/api/whatsapp")
 
 # --------------------------------------------------
 # Plivo Inbound Call — returns XML + stores config
