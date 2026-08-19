@@ -12,3 +12,4 @@ pydantic~=2.10
 redis>=5.0.0
 openai>=1.54
 pypdf~=5.1
+plivo~=4.62

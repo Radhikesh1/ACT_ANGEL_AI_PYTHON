@@ -4,11 +4,10 @@ from io import BytesIO
 from loguru import logger
 from openai import AsyncOpenAI
 
-from database.connection import AsyncSessionLocal
-from database.models import WhatsAppMessageLog
 from services import whatsapp_client
+from services.chat_agent import run_chat
+from services.message_log import log_message
 from utils.pdf_text import extract_pdf_text
-from utils.session_state import append_whatsapp_turn, get_whatsapp_history
 
 NOT_SUPPORTED_MESSAGE = "You can only send text messages, images, audio files and PDF documents."
 INCORRECT_FORMAT_MESSAGE = "Sorry but you can only send PDF files."
@@ -31,25 +30,19 @@ async def _log_message(
     status: str = "received",
     error_message: str | None = None,
 ) -> None:
-    try:
-        async with AsyncSessionLocal() as db:
-            db.add(WhatsAppMessageLog(
-                organization_id=organization_id,
-                assistant_id=assistant_id,
-                wa_id=wa_id,
-                phone_number_id=phone_number_id,
-                wa_message_id=wa_message_id,
-                direction=direction,
-                message_type=message_type,
-                content=(content or "")[:20000],
-                status=status,
-                error_message=error_message,
-            ))
-            await db.commit()
-    except Exception as e:
-        # wa_message_id has a unique constraint — a redelivered webhook will
-        # violate it here, which is the intended dedupe signal, not a bug.
-        logger.warning(f"[WhatsApp] Failed to log message ({message_type}, wa_id={wa_id}): {e}")
+    await log_message(
+        channel="whatsapp",
+        organization_id=organization_id,
+        assistant_id=assistant_id,
+        contact_id=wa_id,
+        channel_number=phone_number_id,
+        external_message_id=wa_message_id,
+        direction=direction,
+        message_type=message_type,
+        content=content,
+        status=status,
+        error_message=error_message,
+    )
 
 
 async def _run_chat(
@@ -60,19 +53,7 @@ async def _run_chat(
     temperature: float,
     user_text: str,
 ) -> str:
-    history = get_whatsapp_history(wa_id)
-    messages = [{"role": "system", "content": system_prompt}, *history, {"role": "user", "content": user_text}]
-
-    completion = await client.chat.completions.create(
-        model=llm_model,
-        temperature=temperature,
-        messages=messages,
-    )
-    reply = completion.choices[0].message.content or ""
-
-    append_whatsapp_turn(wa_id, "user", user_text)
-    append_whatsapp_turn(wa_id, "assistant", reply)
-    return reply
+    return await run_chat(client, "whatsapp", wa_id, system_prompt, llm_model, temperature, user_text)
 
 
 async def _transcribe_audio(client: AsyncOpenAI, data: bytes, mime_type: str) -> str:

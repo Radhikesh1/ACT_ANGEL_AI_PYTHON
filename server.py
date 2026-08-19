@@ -20,6 +20,7 @@ from api.auth import router as auth_router
 from api.assistants import router as assistants_router
 from api.call_logs import router as call_logs_router
 from api.whatsapp import router as whatsapp_router
+from api.sms import router as sms_router
 
 load_dotenv()
 
@@ -82,6 +83,7 @@ app.include_router(auth_router, prefix="/api")
 app.include_router(assistants_router, prefix="/api")
 app.include_router(call_logs_router, prefix="/api")
 app.include_router(whatsapp_router, prefix="/api/whatsapp")
+app.include_router(sms_router, prefix="/api/sms")
 
 # --------------------------------------------------
 # Plivo Inbound Call — returns XML + stores config

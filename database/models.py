@@ -165,10 +165,12 @@ class WhatsAppNumber(Base):
     )
 
 
-class WhatsAppMessageLog(Base):
-    """Inbound/outbound WhatsApp message audit trail. The unique constraint on
-    wa_message_id doubles as a dedupe guard against Meta's webhook redelivery."""
-    __tablename__ = "whatsapp_message_logs"
+class MessageLog(Base):
+    """Inbound/outbound messaging-channel audit trail, shared across every
+    text-based channel (WhatsApp, SMS, ...). The unique constraint on
+    external_message_id doubles as a dedupe guard against webhook redelivery
+    (Meta retries WhatsApp deliveries; Plivo's MessageUUID serves the same role)."""
+    __tablename__ = "message_logs"
     __table_args__ = {"schema": "pipecat"}
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -176,9 +178,10 @@ class WhatsAppMessageLog(Base):
     )
     organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     assistant_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
-    wa_id: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
-    phone_number_id: Mapped[str] = mapped_column(String(50), default="")
-    wa_message_id: Mapped[str | None] = mapped_column(String(100), unique=True, nullable=True)
+    channel: Mapped[str] = mapped_column(String(20), nullable=False)  # "whatsapp" / "sms"
+    contact_id: Mapped[str] = mapped_column(String(50), nullable=False, index=True)  # wa_id or phone number
+    channel_number: Mapped[str] = mapped_column(String(50), default="")  # phone_number_id or Plivo number
+    external_message_id: Mapped[str | None] = mapped_column(String(100), unique=True, nullable=True)
     direction: Mapped[str] = mapped_column(String(10), nullable=False)
     message_type: Mapped[str] = mapped_column(String(20), nullable=False)
     content: Mapped[str | None] = mapped_column(Text, nullable=True)
