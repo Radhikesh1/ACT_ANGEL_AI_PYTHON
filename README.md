@@ -25,18 +25,18 @@ Each inbound call is routed to the assistant assigned to that Plivo number. The 
 
 ## Tech Stack
 
-| Layer | Technology |
-|---|---|
-| Voice pipeline | Pipecat-AI |
-| Web server | FastAPI + Uvicorn |
-| Database | PostgreSQL (via SQLAlchemy async + asyncpg) |
-| LLM | OpenAI (GPT-4o-mini / GPT-4o, configurable per assistant) |
-| STT | Sarvam AI (`saaras:v3`) |
-| TTS | Sarvam AI (`bulbul:v3`) |
-| Telephony | Plivo (µ-law, 8 kHz audio) |
-| Appointment API | Make.com Webhook |
-| Auth | JWT in httpOnly cookie |
-| Frontend | React 19 + Vite + Tailwind + shadcn/ui (separate repo) |
+| Layer           | Technology                                                |
+| --------------- | --------------------------------------------------------- |
+| Voice pipeline  | Pipecat-AI                                                |
+| Web server      | FastAPI + Uvicorn                                         |
+| Database        | PostgreSQL (via SQLAlchemy async + asyncpg)               |
+| LLM             | OpenAI (GPT-4o-mini / GPT-4o, configurable per assistant) |
+| STT             | Sarvam AI (`saaras:v3`)                                   |
+| TTS             | Sarvam AI (`bulbul:v3`)                                   |
+| Telephony       | Plivo (µ-law, 8 kHz audio)                                |
+| Appointment API | Make.com Webhook                                          |
+| Auth            | JWT in httpOnly cookie                                    |
+| Frontend        | React 19 + Vite + Tailwind + shadcn/ui (separate repo)    |
 
 ---
 
@@ -97,30 +97,30 @@ ACT_ANGEL_AI_PYTHON/
 
 ### `assistants`
 
-| Column | Type | Description |
-|---|---|---|
-| `id` | UUID | Primary key |
-| `name` | String | Display name |
-| `system_prompt` | Text | Full LLM system prompt |
-| `welcome_message` | String | First thing the assistant says when call connects |
-| `default_language` | String | `english` / `hindi` / `bengali` / `telugu` / `gujarati` |
-| `voice` | String | Sarvam TTS voice name |
-| `llm_model` | String | `gpt-4o-mini` or `gpt-4o` |
-| `temperature` | Float | 0.0 – 1.0 |
-| `business_hours_start` | String | `HH:MM` (IST) |
-| `business_hours_end` | String | `HH:MM` (IST) |
-| `status` | String | `development` (default) or `production` |
-| `created_at` | DateTime | |
-| `updated_at` | DateTime | |
+| Column                 | Type     | Description                                             |
+| ---------------------- | -------- | ------------------------------------------------------- |
+| `id`                   | UUID     | Primary key                                             |
+| `name`                 | String   | Display name                                            |
+| `system_prompt`        | Text     | Full LLM system prompt                                  |
+| `welcome_message`      | String   | First thing the assistant says when call connects       |
+| `default_language`     | String   | `english` / `hindi` / `bengali` / `telugu` / `gujarati` |
+| `voice`                | String   | Sarvam TTS voice name                                   |
+| `llm_model`            | String   | `gpt-4o-mini` or `gpt-4o`                               |
+| `temperature`          | Float    | 0.0 – 1.0                                               |
+| `business_hours_start` | String   | `HH:MM` (IST)                                           |
+| `business_hours_end`   | String   | `HH:MM` (IST)                                           |
+| `status`               | String   | `development` (default) or `production`                 |
+| `created_at`           | DateTime |                                                         |
+| `updated_at`           | DateTime |                                                         |
 
 ### `plivo_numbers`
 
-| Column | Type | Description |
-|---|---|---|
-| `id` | UUID | Primary key |
-| `number` | String | Plivo phone number |
-| `friendly_name` | String | Alias from Plivo |
-| `assistant_id` | UUID FK | Linked assistant (nullable) |
+| Column               | Type    | Description                   |
+| -------------------- | ------- | ----------------------------- |
+| `id`                 | UUID    | Primary key                   |
+| `number`             | String  | Plivo phone number            |
+| `friendly_name`      | String  | Alias from Plivo              |
+| `assistant_id`       | UUID FK | Linked assistant (nullable)   |
 | `webhook_configured` | Boolean | Whether Plivo webhook was set |
 
 ---
@@ -128,35 +128,39 @@ ACT_ANGEL_AI_PYTHON/
 ## API Endpoints
 
 ### Auth
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/api/auth/login` | Login with `{ username, password }` → sets `access_token` cookie |
-| `GET` | `/api/auth/me` | Returns current user info |
-| `POST` | `/api/auth/logout` | Clears cookie |
+
+| Method | Path               | Description                                                      |
+| ------ | ------------------ | ---------------------------------------------------------------- |
+| `POST` | `/api/auth/login`  | Login with `{ username, password }` → sets `access_token` cookie |
+| `GET`  | `/api/auth/me`     | Returns current user info                                        |
+| `POST` | `/api/auth/logout` | Clears cookie                                                    |
 
 ### Assistants
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/api/assistants` | List all assistants |
-| `POST` | `/api/assistants` | Create assistant |
-| `GET` | `/api/assistants/{id}` | Get one assistant |
-| `PUT` | `/api/assistants/{id}` | Update assistant (blocked if `status=production`) |
-| `DELETE` | `/api/assistants/{id}` | Delete assistant (blocked if `status=production`) |
-| `POST` | `/api/assistants/{id}/publish` | Move to production |
-| `POST` | `/api/assistants/{id}/unpublish` | Move back to development |
+
+| Method   | Path                             | Description                                       |
+| -------- | -------------------------------- | ------------------------------------------------- |
+| `GET`    | `/api/assistants`                | List all assistants                               |
+| `POST`   | `/api/assistants`                | Create assistant                                  |
+| `GET`    | `/api/assistants/{id}`           | Get one assistant                                 |
+| `PUT`    | `/api/assistants/{id}`           | Update assistant (blocked if `status=production`) |
+| `DELETE` | `/api/assistants/{id}`           | Delete assistant (blocked if `status=production`) |
+| `POST`   | `/api/assistants/{id}/publish`   | Move to production                                |
+| `POST`   | `/api/assistants/{id}/unpublish` | Move back to development                          |
 
 ### Phone Numbers
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/api/numbers` | List Plivo numbers + assignment state |
+
+| Method | Path                                          | Description                                        |
+| ------ | --------------------------------------------- | -------------------------------------------------- |
+| `GET`  | `/api/numbers`                                | List Plivo numbers + assignment state              |
 | `POST` | `/api/numbers/{number}/assign/{assistant_id}` | Assign number → assistant, auto-sets Plivo webhook |
-| `POST` | `/api/numbers/{number}/unassign` | Remove assignment |
+| `POST` | `/api/numbers/{number}/unassign`              | Remove assignment                                  |
 
 ### Voice (Plivo)
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/answerCall` | Receives Plivo inbound call, looks up assistant by dialed number, returns XML |
-| `WebSocket` | `/ws` | Real-time µ-law audio stream for active calls |
+
+| Method      | Path          | Description                                                                   |
+| ----------- | ------------- | ----------------------------------------------------------------------------- |
+| `GET`       | `/answerCall` | Receives Plivo inbound call, looks up assistant by dialed number, returns XML |
+| `WebSocket` | `/ws`         | Real-time µ-law audio stream for active calls                                 |
 
 ---
 
@@ -176,12 +180,12 @@ ACT_ANGEL_AI_PYTHON/
 ## Supported Languages & Voices
 
 | Language | TTS Voice |
-|---|---|
-| English | `pooja` |
-| Hindi | `priya` |
-| Bengali | `simran` |
-| Telugu | `kavitha` |
-| Gujarati | `priya` |
+| -------- | --------- |
+| English  | `pooja`   |
+| Hindi    | `priya`   |
+| Bengali  | `simran`  |
+| Telugu   | `kavitha` |
+| Gujarati | `priya`   |
 
 Language is auto-detected from caller speech. A confirmation step prevents accidental switching. The default language per assistant is configurable in the dashboard.
 
@@ -244,7 +248,7 @@ On the WEB side, every `call_usages` row records which active `byok_rate_version
 
 ### Model Pricing Overrides
 
-Where BYOK Cost Overrides (above) is the flat rate charged *instead of* the usual cost formula, `services/cost_service.py`'s pricing table (`_LLM_PRICING`, `_SARVAM_PER_MIN`, `_PLIVO_PER_MIN`, `_PLATFORM_PER_MIN` — the env vars documented at the top of that file) *is* the usual cost formula: what OpenAI/Sarvam/Plivo actually charge, per model / per minute. Those env vars are still the last-resort fallback, but the primary source is now the same versioned mechanism as everything else — WEB's `model_pricing_versions` table (`public` schema, Global Settings → "Model Pricing" tab), read via a new `ModelPricingVersion` model (`database/models.py`).
+Where BYOK Cost Overrides (above) is the flat rate charged _instead of_ the usual cost formula, `services/cost_service.py`'s pricing table (`_LLM_PRICING`, `_SARVAM_PER_MIN`, `_PLIVO_PER_MIN`, `_PLATFORM_PER_MIN` — the env vars documented at the top of that file) _is_ the usual cost formula: what OpenAI/Sarvam/Plivo actually charge, per model / per minute. Those env vars are still the last-resort fallback, but the primary source is now the same versioned mechanism as everything else — WEB's `model_pricing_versions` table (`public` schema, Global Settings → "Model Pricing" tab), read via a new `ModelPricingVersion` model (`database/models.py`).
 
 Unlike `BYOKRateVersion`/`AssistantExtension` (one column per rate), `ModelPricingVersion.rates` is a single JSONB blob holding the whole pricing table — `{"analytics": {...}, "llm": {"<model-prefix>": {"inputPer1M", "outputPer1M"}, ...}, "sttPerMinute", "phonePerMinute", "platformPerMinute"}` — since the model list can grow without a migration. `analytics` is WEB-only (its post-call analytics pricing) and is ignored on the Python side.
 
@@ -387,21 +391,65 @@ The runner tracks applied migrations in a `schema_migrations` table and runs eac
 
 All per-call state is in-memory and scoped to `CallUUID`. It is lost on server restart (mid-call state only — assistant configuration is always re-read from the DB).
 
-| Dict | Purpose |
-|---|---|
-| `call_sessions` | `call_id → { from_number, assistant_config }` |
-| `language_sessions` | `call_id → { language, locked, pending }` |
+| Dict                  | Purpose                                             |
+| --------------------- | --------------------------------------------------- |
+| `call_sessions`       | `call_id → { from_number, assistant_config }`       |
+| `language_sessions`   | `call_id → { language, locked, pending }`           |
 | `conversation_states` | `call_id → { awaiting_datetime, appointment_type }` |
 
 ---
 
 ## Frontend Pages (CHAT_WEB)
 
-| Route | Page |
-|---|---|
-| `/login` | Login form |
-| `/assistants` | List all assistants — create, publish, delete |
-| `/assistants/new` | Create assistant form |
-| `/assistants/:id` | Edit assistant form (locked when production) |
-| `/numbers` | Plivo number table — assign/unassign assistants |
-| `/chat` | Chat UI |
+| Route             | Page                                            |
+| ----------------- | ----------------------------------------------- |
+| `/login`          | Login form                                      |
+| `/assistants`     | List all assistants — create, publish, delete   |
+| `/assistants/new` | Create assistant form                           |
+| `/assistants/:id` | Edit assistant form (locked when production)    |
+| `/numbers`        | Plivo number table — assign/unassign assistants |
+| `/chat`           | Chat UI                                         |
+
+Split services/email_api.py (748 lines) into four files matching this repo's existing conventions:
+
+utils/email_parsing.py (51 lines) — stateless text helpers (extract_email_address, get_body, strip_quoted_reply, strip_leading_subject_line)
+services/email_agent_prompt.py (178 lines) — SYSTEM_PROMPT + TOOLS, pure config
+services/email_repository.py (161 lines) — all raw psycopg2 access to the leads DB, now reading LEADS_DATABASE_URL instead of colliding with the app's own DATABASE_URL
+services/email_agent.py (378 lines) — orchestration + entrypoint (OpenAI calls, SMTP, IMAP IDLE loop, main())
+maybe_compact now takes call_openai_fn as a parameter instead of the repository module importing OpenAI config directly — keeps the DB layer free of LLM-specific concerns and avoids a circular import between repository and agent.
+
+Supporting changes:
+
+requirements.txt: added imapclient, psycopg2-binary, requests (installed into the project venv and verified)
+.env.example: documented IMAP*\*, SMTP*\*, LEADS_DATABASE_URL, TOOL_WEBHOOK_URL, and clarified OPENAI_API_KEY is hard-required for the email agent (unlike the voice app, where it's optional)
+Deleted the old services/email_api.py
+Verified with py_compile and a real import (with dummy env vars) that the four modules wire together correctly
+Nothing is committed yet. Still open: you were going to confirm whether LEADS_DATABASE_URL should point at the same Postgres instance the EC2 watcher currently uses, or a different one — let me know when you have that, and I'll fill in the real value/notes accordingly (or if it's just for you to configure at deploy time, we're done here).
+
+Here's the full trace, end to end, with the one gap I'm honest about at the point it occurs.
+
+1. Form submission (act-angel_front, Vercel)
+   User picks the Email channel button in meet-your-angel-form.tsx:29-38, fills name/phone/email, submits.
+
+handleDetailsSubmit (:134-169) → sendCodes → POST /api/otp/send.
+Important detail: verification is always dual-channel — /api/otp/send sends a Twilio Verify code to both the phone (SMS) and the email, regardless of which conversation channel was picked (route.ts:82-87). The channel choice doesn't affect verification — only what happens after.
+User enters both codes → handleOtpSubmit (:188-240) → POST /api/otp/verify with {name, phone, email, phoneCode, emailCode, channel: "Email"}. 2. Verification + handoff to n8n
+/api/otp/verify checks both codes against Twilio (route.ts:70-95). If both pass, it makes one outbound call: POST N8N_INTAKE_WEBHOOK_URL with {name, phone, email, otp_status: "verified", channel: "Email"} (route.ts:107-122).
+
+This is the gap I can't see into. That n8n workflow is hosted at cloudsteer.app.n8n.cloud — not in any repo I have access to. Per the code comment it "pushes the lead to Postgres, picks the right outbound number by country, and fires the Retell call." The success screen text for the Email channel says "Check your inbox — your Angel has just sent you a note to get the conversation started" (meet-your-angel-form.tsx:442-447), so somewhere in that n8n workflow, for channel="Email", it must: (a) insert the leads row, and (b) send the first outbound email and log a matching direction='outbound' row in emails — that row is what later lets already_replied_to and the reply-threading (In-Reply-To/References) work. I haven't seen that logic; if you want it confirmed, we'd need to open that n8n workflow.
+
+3. The lead replies — this is where email_agent.py takes over
+   Independent of all of the above, services/email_agent.py's main() holds an open IMAP IDLE connection to Hello@ActAngel.com, re-armed every 9 minutes (idle_loop). When the lead hits reply:
+
+Gmail wakes the IDLE connection → catch_up(conn) runs → handle_message(conn, uid) for each new UID (:267).
+Parses the raw email: from_email, subject, body (quote-stripped), message_id, in_reply_to, references (:271-276).
+find_lead_by_email(cur, from_email) (:288) — looks the sender up in the shared leads table. This only works if step 2's n8n insert already created that row with this exact email. No match → silently skipped, no reply sent.
+Two idempotency guards: already_replied_to (has an outbound reply already gone out in_reply_to this exact message?) and already_logged_inbound (was this inbound message already logged by a prior, crashed attempt?) (:294-302).
+Logs the inbound row, runs maybe_compact (rolls old history into a summary once 50+ messages have piled up), then load_context pulls: the last 12 raw messages, the most recent prospect_memory summary (not filtered by channel at read time — this is the actual cross-channel memory: a summary written from a voice or WhatsApp conversation gets read here too), and the latest callbacks row (:306).
+DB connection closes here — deliberately, before the slow part.
+generate_reply(...) builds the prompt (system prompt + a "ground truth" block about the lead's name/email/website_trial origin + cross-channel summary + callback status, per build_messages), calls OpenAI. If the model requests tool calls (log_qualification, update_lead_score, book_demo, etc.), each one is POSTed to the same TOOL_WEBHOOK_URL n8n endpoint Retell/WhatsApp use (run_tool_call) — so the actual side-effects (writing qualification data, scheduling callbacks) are executed by n8n, not by this script. A second OpenAI call (no tools offered) then produces the actual reply text.
+send_reply(...) sends the real email via SMTP, threaded with In-Reply-To/References (:213), then a second DB round-trip logs the outbound row.
+save_last_uid(uid) persists progress locally, loop goes back to IDLE.
+So the only thing genuinely "EC2-specific" today is which machine is running that IMAP loop — steps 1–2 and the n8n pieces don't change no matter where email_agent.py runs, since nothing calls it by address; it just needs the same mailbox creds + LEADS_DATABASE_URL + TOOL_WEBHOOK_URL you've now got in .env.
+
+Want me to look at anything specific next — e.g., a dry run of email_agent.py here, or should we try to get eyes on that n8n workflow to confirm step 2's outbound-email logic?
